@@ -64,13 +64,11 @@ class Constants:
     DESIGNATIONS = (
         ('academic', 'Academic Designation'),
         ('administrative', 'Administrative Designation'),
-
-
     )
-    USER_STATUS = {
+    USER_STATUS = (
         ("NEW", "NEW"),
         ("PRESENT", "PRESENT"),
-    }
+    )
 
 
 class Designation(models.Model):
@@ -154,6 +152,7 @@ class ExtraInfo(models.Model):
         null=True, blank=True, upload_to='globals/profile_pictures')
     about_me = models.TextField(default='NA', max_length=1000, blank=True)
     date_modified = models.DateTimeField('date_updated', blank=True, null=True)
+    last_selected_role = models.CharField(max_length=20, null=True, blank=True)
 
     @property
     def age(self):
@@ -226,7 +225,8 @@ class Faculty(models.Model):
         
 
     def __str__(self):
-        return str(self.id)
+        # return str(self.id)
+        return f"{self.id} - {self.id.user.first_name} {self.id.user.last_name}"
 
 
 """ Feedback and bug report models start"""
@@ -312,3 +312,76 @@ class Issue(models.Model):
 
 
 """ End of feedback and bug report models"""
+
+
+
+class ModuleAccess(models.Model):
+    designation = models.CharField(max_length=155)
+    program_and_curriculum = models.BooleanField(default=False)
+    course_registration = models.BooleanField(default=False)
+    course_management = models.BooleanField(default=False)
+    other_academics = models.BooleanField(default=False)
+    spacs = models.BooleanField(default=False)
+    department = models.BooleanField(default=False)
+    database = models.BooleanField(default=False)
+    examinations = models.BooleanField(default=False)
+    hr = models.BooleanField(default=False)
+    iwd = models.BooleanField(default=False)
+    complaint_management = models.BooleanField(default=False)
+    fts = models.BooleanField(default=False)
+    purchase_and_store = models.BooleanField(default=False)
+    rspc = models.BooleanField(default=False)
+    hostel_management = models.BooleanField(default=False)
+    mess_management = models.BooleanField(default=False)
+    gymkhana = models.BooleanField(default=False)
+    placement_cell = models.BooleanField(default=False)
+    visitor_hostel = models.BooleanField(default=False)
+    phc = models.BooleanField(default=False)
+
+    def __str__(self):
+        return self.designation
+       
+
+class PasswordResetTracker(models.Model):
+    email = models.EmailField(unique=True)
+    last_reset = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return self.email
+
+
+class PasswordResetOTP(models.Model):
+    """
+    Stores a single active OTP record per username.
+    - otp_hash         : HMAC-SHA256(SECRET_KEY, otp) — never stores plaintext OTP
+    - attempts         : failed verify attempts; locked after OTP_MAX_ATTEMPTS
+    - send_count       : OTPs sent in the current rate-limit window
+    - window_start     : start of the current hour-long rate-limit window
+    - expires_at       : OTP validity deadline (OTP_TTL_MINUTES from creation)
+    - reset_token_hash : SHA-256 of the single-use reset token (set after OTP verified)
+    - token_expires_at : reset token validity deadline (TOKEN_TTL_MINUTES from issue)
+    - token_used       : True once the reset token has been consumed
+    """
+    OTP_TTL_MINUTES    = 10
+    TOKEN_TTL_MINUTES  = 15
+    OTP_MAX_ATTEMPTS   = 5
+    OTP_HOURLY_LIMIT   = 3
+
+    username           = models.CharField(max_length=150, db_index=True)
+    otp_hash           = models.CharField(max_length=64)
+    attempts           = models.PositiveSmallIntegerField(default=0)
+    send_count         = models.PositiveSmallIntegerField(default=1)
+    window_start       = models.DateTimeField()
+    created_at         = models.DateTimeField(auto_now_add=True)
+    expires_at         = models.DateTimeField()
+    reset_token_hash   = models.CharField(max_length=64, null=True, blank=True)
+    token_expires_at   = models.DateTimeField(null=True, blank=True)
+    token_used         = models.BooleanField(default=False)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["username"], name="unique_active_otp_per_user")
+        ]
+
+    def __str__(self):
+        return f"OTP record for {self.username}"
