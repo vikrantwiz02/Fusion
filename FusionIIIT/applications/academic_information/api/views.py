@@ -23,7 +23,7 @@ from rest_framework.response import Response
 from applications.globals.models import User,ExtraInfo
 from applications.academic_information.models import Student, Course, Curriculum, Curriculum_Instructor, Student_attendance, Meeting, Calendar, Holiday, Grades, Spi, Timetable, Exam_timetable
 from applications.programme_curriculum.models import Course as Courses, CourseSlot, Batch, Semester, CourseInstructor
-from applications.academic_procedures.models import InitialRegistration, Assignment, StipendRequest
+from applications.academic_procedures.models import InitialRegistration, FinalRegistration, Assignment, StipendRequest
 from . import serializers
 from rest_framework.generics import ListCreateAPIView
 from django.views.decorators.csrf import csrf_exempt
@@ -327,6 +327,282 @@ def start_allocation_api(request):
 
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
+
+
+def _semester_type(sem):
+    return "Even Semester" if int(sem) % 2 == 0 else "Odd Semester"
+
+
+def _academic_year_label(year, sem_type):
+    y = int(year)
+    if sem_type == "Even Semester":
+        return f"{y - 1}-{str(y)[2:]}"
+    return f"{y}-{str(y + 1)[2:]}"
+
+
+def _get_instructor_name(course_id, year_int, sem_type):
+    ci = CourseInstructor.objects.filter(
+        course_id=course_id, year=year_int, semester_type=sem_type
+    ).select_related('instructor_id__id__user').first()
+    if ci:
+        return f"{ci.instructor_id.id.user.first_name} {ci.instructor_id.id.user.last_name}".strip() or "TBA"
+    return "TBA"
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
+@role_required(['acadadmin'])
+def get_allocation_results(request):
+    batch = request.data.get('batch')
+    sem = request.data.get('sem')
+    year = request.data.get('year')
+    programme_type = request.data.get('programme_type', 'UG')
+
+    if not batch or not sem:
+        return Response({"status": -1, "message": "batch and sem are required"}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        batch = int(batch)
+        sem = int(sem)
+        year_int = int(year) if year else None
+    except (ValueError, TypeError):
+        return Response({"status": -1, "message": "Invalid batch, sem, or year"}, status=status.HTTP_400_BAD_REQUEST)
+
+    sem_type = _semester_type(sem)
+    academic_year = _academic_year_label(year_int, sem_type) if year_int else ""
+
+    filters = Q(semester_id__semester_no=sem) & Q(student_id__batch=batch)
+    if programme_type:
+        filters &= Q(student_id__batch_id__curriculum__programme__category=programme_type)
+
+    registrations = FinalRegistration.objects.filter(filters).select_related(
+        'student_id__id__user',
+        'student_id__batch_id__discipline',
+        'course_id',
+    ).order_by('student_id__id__id')
+
+    student_map = {}
+    course_map = {}
+
+    for reg in registrations:
+        s = reg.student_id
+        sid = s.id.id
+        full_name = f"{s.id.user.first_name} {s.id.user.last_name}".strip() or s.id.user.username
+        email = s.id.user.email or ""
+        try:
+            discipline = s.batch_id.discipline.acronym if s.batch_id and s.batch_id.discipline else "General"
+        except Exception:
+            discipline = "General"
+
+        c = reg.course_id
+        cid = c.id
+
+        if sid not in student_map:
+            student_map[sid] = {"student_id": sid, "student_name": full_name, "batch": s.batch, "courses": []}
+        student_map[sid]["courses"].append({
+            "id": cid, "code": c.code, "name": c.name,
+        })
+
+        if cid not in course_map:
+            instructor = _get_instructor_name(cid, year_int, sem_type) if year_int else "TBA"
+            course_map[cid] = {
+                "course_db_id": cid,
+                "course_code": c.code,
+                "course_name": c.name,
+                "instructor": instructor,
+                "students": [],
+            }
+        course_map[cid]["students"].append({
+            "roll_no": sid,
+            "full_name": full_name,
+            "discipline": discipline,
+            "email": email,
+            "registration_type": reg.registration_type,
+        })
+
+    return Response({
+        "status": 1,
+        "semester_type": sem_type,
+        "academic_year": academic_year,
+        "programme_type": programme_type,
+        "student_wise": list(student_map.values()),
+        "course_wise": list(course_map.values()),
+    })
+
+
+def _build_allocation_excel(course, students, sem_type, academic_year, programme_type, instructor):
+    from openpyxl import Workbook as OXWorkbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+    wb = OXWorkbook()
+    ws = wb.active
+    ws.title = "Student List"
+
+    for i, w in enumerate([8, 15, 30, 15, 35, 18, 15], 1):
+        ws.column_dimensions[chr(64 + i)].width = w
+
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    thin = Side(style="thin")
+    thin_border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    ws.merge_cells('A1:G1')
+    ws['A1'] = "PDPM INDIAN INSTITUTE OF INFORMATION TECHNOLOGY, DESIGN AND MANUFACTURING JABALPUR"
+    ws['A1'].font = Font(bold=True, size=9)
+    ws['A1'].alignment = Alignment(horizontal="center")
+
+    ws.merge_cells('A2:G2')
+    ws['A2'] = f"{sem_type.upper()}, {academic_year}"
+    ws['A2'].font = Font(bold=True, size=12)
+    ws['A2'].alignment = Alignment(horizontal="center")
+
+    for row_num, text in enumerate([
+        f"Course No: {course.code}",
+        f"Course Title: {course.name}",
+        f"Instructor: {instructor}",
+        f"List Type: All Enrolled Students ({programme_type} Only)",
+    ], start=3):
+        ws.merge_cells(f'A{row_num}:G{row_num}')
+        ws[f'A{row_num}'] = text
+        ws[f'A{row_num}'].alignment = Alignment(horizontal="left", vertical="center")
+
+    headers = ['Sl. No', 'Roll No', 'Name', 'Discipline', 'Email', 'Reg. Type', 'Signature']
+    for col, hdr in enumerate(headers, 1):
+        cell = ws.cell(row=8, column=col, value=hdr)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
+
+    for idx, stu in enumerate(students, 1):
+        ws.append([idx, stu['roll_no'], stu['full_name'], stu['discipline'], stu['email'], stu['registration_type'], ''])
+
+    for row in range(8, ws.max_row + 1):
+        for col in range(1, 8):
+            ws.cell(row=row, column=col).border = thin_border
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+def _fetch_course_students(batch, sem, course_db_id, programme_type):
+    filters = (
+        Q(semester_id__semester_no=sem)
+        & Q(student_id__batch=batch)
+        & Q(course_id=course_db_id)
+    )
+    if programme_type:
+        filters &= Q(student_id__batch_id__curriculum__programme__category=programme_type)
+
+    regs = FinalRegistration.objects.filter(filters).select_related(
+        'student_id__id__user', 'student_id__batch_id__discipline', 'course_id'
+    ).order_by('student_id__id__id')
+
+    students = []
+    for reg in regs:
+        s = reg.student_id
+        try:
+            discipline = s.batch_id.discipline.acronym if s.batch_id and s.batch_id.discipline else "General"
+        except Exception:
+            discipline = "General"
+        students.append({
+            "roll_no": s.id.id,
+            "full_name": f"{s.id.user.first_name} {s.id.user.last_name}".strip() or s.id.user.username,
+            "discipline": discipline,
+            "email": s.id.user.email or "",
+            "registration_type": reg.registration_type,
+        })
+    return regs, students
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
+@role_required(['acadadmin'])
+def export_allocation_course(request):
+    batch = request.data.get('batch')
+    sem = request.data.get('sem')
+    year = request.data.get('year')
+    programme_type = request.data.get('programme_type', 'UG')
+    course_db_id = request.data.get('course_db_id')
+
+    if not all([batch, sem, course_db_id]):
+        return Response({"error": "batch, sem, and course_db_id are required"}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        batch = int(batch)
+        sem = int(sem)
+        year_int = int(year) if year else None
+        course_db_id = int(course_db_id)
+    except (ValueError, TypeError):
+        return Response({"error": "Invalid parameters"}, status=status.HTTP_400_BAD_REQUEST)
+
+    sem_type = _semester_type(sem)
+    academic_year = _academic_year_label(year_int, sem_type) if year_int else str(year_int)
+
+    regs, students = _fetch_course_students(batch, sem, course_db_id, programme_type)
+    if not regs.exists():
+        return Response({"error": "No allocation data found"}, status=status.HTTP_404_NOT_FOUND)
+
+    course = regs.first().course_id
+    instructor = _get_instructor_name(course_db_id, year_int, sem_type) if year_int else "TBA"
+
+    buf = _build_allocation_excel(course, students, sem_type, academic_year, programme_type, instructor)
+    filename = f"{batch}_Sem{sem}_{course.code}.xlsx"
+    response = HttpResponse(buf.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
+@role_required(['acadadmin'])
+def export_all_allocation_courses(request):
+    import zipfile
+
+    batch = request.data.get('batch')
+    sem = request.data.get('sem')
+    year = request.data.get('year')
+    programme_type = request.data.get('programme_type', 'UG')
+
+    if not all([batch, sem]):
+        return Response({"error": "batch and sem are required"}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        batch = int(batch)
+        sem = int(sem)
+        year_int = int(year) if year else None
+    except (ValueError, TypeError):
+        return Response({"error": "Invalid parameters"}, status=status.HTTP_400_BAD_REQUEST)
+
+    sem_type = _semester_type(sem)
+    academic_year = _academic_year_label(year_int, sem_type) if year_int else str(year_int)
+
+    filters = Q(semester_id__semester_no=sem) & Q(student_id__batch=batch)
+    if programme_type:
+        filters &= Q(student_id__batch_id__curriculum__programme__category=programme_type)
+
+    course_ids = FinalRegistration.objects.filter(filters).values_list('course_id', flat=True).distinct()
+
+    zip_buf = BytesIO()
+    with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for cid in course_ids:
+            regs, students = _fetch_course_students(batch, sem, cid, programme_type)
+            if not regs.exists():
+                continue
+            course = regs.first().course_id
+            instructor = _get_instructor_name(cid, year_int, sem_type) if year_int else "TBA"
+            xl_buf = _build_allocation_excel(course, students, sem_type, academic_year, programme_type, instructor)
+            zf.writestr(f"{batch}_Sem{sem}_{course.code}.xlsx", xl_buf.getvalue())
+
+    zip_buf.seek(0)
+    zip_filename = f"{batch}_Sem{sem}_AllCourses.zip"
+    response = HttpResponse(zip_buf.getvalue(), content_type='application/zip')
+    response['Content-Disposition'] = f'attachment; filename="{zip_filename}"'
+    return response
 
 
 def parse_academic_year(academic_year, semester_type):
