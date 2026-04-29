@@ -1123,13 +1123,22 @@ def verify_registration(request):
         with transaction.atomic():
             ver_reg = []
             for obj in final_register_list:
+                _work_year = datetime.datetime.now().year
+                _sem_no    = obj.semester_id.semester_no
+                _sem_type  = "Odd Semester" if _sem_no % 2 == 1 else "Even Semester"
+                if _sem_type == "Odd Semester":
+                    _session = f"{_work_year}-{str(_work_year + 1)[-2:]}"
+                else:
+                    _session = f"{_work_year - 1}-{str(_work_year)[-2:]}"
                 p = course_registration(
                     course_id=obj.course_id,
                     student_id=student,
                     semester_id=obj.semester_id,
-                    course_slot_id = obj.course_slot_id,
-                    working_year = datetime.datetime.now().year,
-                    registration_type=obj.registration_type
+                    course_slot_id=obj.course_slot_id,
+                    working_year=_work_year,
+                    registration_type=obj.registration_type,
+                    session=_session,
+                    semester_type=_sem_type,
                     )
                 # ver_reg.append(p)
                 p.save()
