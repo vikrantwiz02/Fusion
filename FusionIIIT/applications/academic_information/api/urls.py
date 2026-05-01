@@ -25,6 +25,7 @@ urlpatterns = [
     url(r'^allocation-results/export-all$', views.export_all_allocation_courses, name='allocation-results-export-all-api'),
     url(r'^generatexlsheet$', views.generate_xlsheet_api, name='generate-xlsheet-api'),
     url(r'^available-courses/$', views.available_courses, name='available_courses'),
+    url(r'^export-all-courses-zip/$', views.export_all_courses_zip, name='export-all-courses-zip'),
     url(r'^generate_preregistration_report',views.generate_preregistration_report, name = "generate_preregistration_report"),
     url(r'^calendar/$',        views.list_calendar,   name='list_calendar'),
     url(r'^calendar/add/$',    views.add_calendar,    name='add_calendar'),

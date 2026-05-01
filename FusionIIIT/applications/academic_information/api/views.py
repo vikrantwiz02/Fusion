@@ -3,6 +3,7 @@ import json
 import io
 import logging
 import time
+import zipfile
 import pandas as pd
 from io import BytesIO
 from xlsxwriter.workbook import Workbook
@@ -677,11 +678,11 @@ def generate_xlsheet_api(request):
             LEFT JOIN programme_curriculum_batch b ON s.batch_id_id = b.id
             LEFT JOIN programme_curriculum_discipline d ON b.discipline_id = d.id
             INNER JOIN programme_curriculum_course c ON cr.course_id_id = c.id
-            WHERE cr.session = %s 
-                AND cr.semester_type = %s 
+            WHERE cr.session = %s
+                AND cr.semester_type = %s
                 AND cr.course_id_id = %s
             """
-            
+
             params = [academic_year, semester_type, course_id]
             
             # Add list_type filter if specified
@@ -1313,10 +1314,177 @@ def available_courses(request):
             instructor_name = f"{course_instructor.instructor_id.id.user.first_name} {course_instructor.instructor_id.id.user.last_name}".strip()
         
         data.append({
-            "id": c.id, 
-            "code": c.code, 
+            "id": c.id,
+            "code": c.code,
             "name": c.name,
             "instructor": instructor_name
         })
-    
+    return Response(data)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
+@role_required(['acadadmin', 'Associate Professor', 'Professor', 'Assistant Professor', 'Dean Academic'])
+def export_all_courses_zip(request):
+    """
+    POST /aims/api/export-all-courses-zip/
+    Exports all courses matching the given filters as individual Excel sheets packaged into a ZIP.
+    Body: { academic_year, semester_type, programme_type (opt), list_type (opt) }
+    """
+    from openpyxl import Workbook as OpenpyxlWorkbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+    academic_year = request.data.get('academic_year')
+    semester_type = request.data.get('semester_type')
+    programme_type = request.data.get('programme_type', '').strip() or None
+    list_type = request.data.get('list_type', '').strip() or None
+
+    if not academic_year or not semester_type:
+        return Response({'error': 'academic_year and semester_type are required'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Determine integer year for instructor lookup
+    year_parts = academic_year.split('-')
+    year_int = int(year_parts[0]) + 1 if semester_type == 'Even Semester' else int(year_parts[0])
+
+    # Build base query for course_registration
+    regs = course_registration.objects.filter(session=academic_year, semester_type=semester_type)
+    if programme_type:
+        prog_map = {'UG': ['B.Tech', 'B.Des'], 'PG': ['M.Tech', 'M.Des', 'PhD']}
+        if programme_type.upper() in prog_map:
+            stu_ids = Student.objects.filter(programme__in=prog_map[programme_type.upper()]).values_list('id', flat=True)
+            regs = regs.filter(student_id__in=stu_ids)
+
+    course_ids = regs.values_list('course_id', flat=True).distinct()
+    courses = Courses.objects.filter(id__in=course_ids).order_by('code')
+
+    if not courses.exists():
+        return Response({'error': 'No courses found for the given filters'}, status=status.HTTP_404_NOT_FOUND)
+
+    # Shared styles
+    header_font  = Font(bold=True, color='FFFFFF')
+    header_fill  = PatternFill(start_color='366092', end_color='366092', fill_type='solid')
+    center_align = Alignment(horizontal='center', vertical='center')
+    left_align   = Alignment(horizontal='left', vertical='center')
+    thin = Side(style='thin')
+    thin_border  = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    col_widths = [8, 15, 30, 15, 35, 18, 15]
+
+    # List-type display label
+    if not list_type:
+        list_type_display = 'All Enrolled Students'
+    elif list_type.lower() == 'backlog_improvement':
+        list_type_display = 'Backlog & Improvement Students'
+    else:
+        list_type_display = f'{list_type} Students'
+    if programme_type:
+        list_type_display += f' ({programme_type.upper()} Only)'
+
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for course_obj in courses:
+            sql = """
+                SELECT DISTINCT
+                    u.username as roll_no,
+                    CONCAT(u.first_name, ' ', u.last_name) as full_name,
+                    COALESCE(d.acronym, 'General') as discipline,
+                    u.email,
+                    cr.registration_type
+                FROM course_registration cr
+                INNER JOIN globals_extrainfo ei ON cr.student_id_id = ei.id
+                INNER JOIN auth_user u ON ei.user_id = u.id
+                LEFT JOIN academic_information_student s ON ei.id = s.id_id
+                LEFT JOIN programme_curriculum_batch b ON s.batch_id_id = b.id
+                LEFT JOIN programme_curriculum_discipline d ON b.discipline_id = d.id
+                WHERE cr.session = %s AND cr.semester_type = %s AND cr.course_id_id = %s
+            """
+            params = [academic_year, semester_type, course_obj.id]
+
+            if list_type:
+                if list_type.lower() == 'backlog_improvement':
+                    sql += " AND cr.registration_type IN ('Backlog', 'Improvement')"
+                else:
+                    sql += ' AND cr.registration_type = %s'
+                    params.append(list_type)
+
+            if programme_type:
+                pt = programme_type.upper()
+                if pt == 'UG':
+                    sql += " AND s.programme IN ('B.Tech', 'B.Des')"
+                elif pt == 'PG':
+                    sql += " AND s.programme IN ('M.Tech', 'M.Des', 'PhD')"
+
+            sql += ' ORDER BY u.username'
+
+            with connection.cursor() as cursor:
+                cursor.execute(sql, params)
+                cols = [c[0] for c in cursor.description]
+                students = [dict(zip(cols, row)) for row in cursor.fetchall()]
+
+            # Instructor
+            instructor_name = 'TBA'
+            ci = CourseInstructor.objects.filter(course_id=course_obj, year=year_int, semester_type=semester_type).first()
+            if ci:
+                instructor_name = f'{ci.instructor_id.id.user.first_name} {ci.instructor_id.id.user.last_name}'.strip()
+
+            # Build workbook
+            wb = OpenpyxlWorkbook()
+            ws = wb.active
+            ws.title = 'Student List'
+
+            for i, w in enumerate(col_widths, 1):
+                ws.column_dimensions[chr(64 + i)].width = w
+
+            ws.merge_cells('A1:G1')
+            ws['A1'] = 'PDPM INDIAN INSTITUTE OF INFORMATION TECHNOLOGY, DESIGN AND MANUFACTURING JABALPUR'
+            ws['A1'].font = Font(bold=True, size=9)
+            ws['A1'].alignment = center_align
+
+            ws.merge_cells('A2:G2')
+            ws['A2'] = f'{semester_type.upper()}, {academic_year}'
+            ws['A2'].font = Font(bold=True, size=12)
+            ws['A2'].alignment = center_align
+
+            ws.merge_cells('A3:G3')
+            ws['A3'] = f'Course No: {course_obj.code}'
+            ws.merge_cells('A4:G4')
+            ws['A4'] = f'Course Title: {course_obj.name}'
+            ws.merge_cells('A5:G5')
+            ws['A5'] = f'Instructor: {instructor_name}'
+            ws.merge_cells('A6:G6')
+            ws['A6'] = f'List Type: {list_type_display}'
+
+            for row in range(3, 7):
+                ws[f'A{row}'].alignment = left_align
+
+            headers = ['Sl. No', 'Roll No', 'Name', 'Discipline', 'Email', 'Reg. Type', 'Signature']
+            for col, hdr in enumerate(headers, 1):
+                cell = ws.cell(row=8, column=col, value=hdr)
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.alignment = center_align
+
+            for idx, stu in enumerate(students, 1):
+                ws.append([idx, stu['roll_no'], stu['full_name'], stu['discipline'], stu['email'], stu['registration_type'], ''])
+
+            last_row = ws.max_row
+            for r in range(8, last_row + 1):
+                for c in range(1, 8):
+                    ws.cell(row=r, column=c).border = thin_border
+
+            # Save workbook into ZIP
+            xls_buf = BytesIO()
+            wb.save(xls_buf)
+            xls_buf.seek(0)
+            safe_name = course_obj.name.replace('/', '-').replace('\\', '-')
+            filename = f'{course_obj.code}_{safe_name}.xlsx'
+            zf.writestr(filename, xls_buf.getvalue())
+
+    zip_buffer.seek(0)
+    zip_filename = f'{academic_year.replace("-", "_")}_{semester_type.replace(" ", "_")}_All_Courses.zip'
+    response = HttpResponse(zip_buffer.getvalue(), content_type='application/zip')
+    response['Content-Disposition'] = f'attachment; filename="{zip_filename}"'
+    return response
+
     return Response(data)
