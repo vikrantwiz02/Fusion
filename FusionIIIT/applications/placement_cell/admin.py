@@ -1,120 +1,65 @@
 from django.contrib import admin
 
-from .models import (Achievement, ChairmanVisit, Coauthor, Coinventor, Course,
-                     Education, Experience, Has, Interest, MessageOfficer, Conference,
-                     NotifyStudent, Patent, PlacementRecord, PlacementSchedule,
-                     PlacementStatus, Project, Publication, Skill, Extracurricular,
-                     StudentPlacement, StudentRecord, Role, CompanyDetails, Reference)
+from .models import (
+    Company, JobPost, PlacementApplication, PlacementAnnouncement,
+    PlacementResult, PlacementSchedule, PlacementStatistics,
+    StudentPlacementProfile,
+)
 
 
-# Register your models here.
-class ProjectAdmin(admin.ModelAdmin):
-    list_display = ('unique_id', 'project_name', 'project_status', 'sdate')
+@admin.register(Company)
+class CompanyAdmin(admin.ModelAdmin):
+    list_display  = ['name', 'sector', 'website', 'created_at']
+    search_fields = ['name', 'sector']
+    list_filter   = ['sector']
 
 
-class SkillAdmin(admin.ModelAdmin):
-    fields = ['skill']
+@admin.register(JobPost)
+class JobPostAdmin(admin.ModelAdmin):
+    list_display  = ['company', 'role', 'job_type', 'ctc', 'deadline', 'is_active']
+    list_filter   = ['job_type', 'is_active']
+    search_fields = ['company__name', 'role']
+    raw_id_fields = ['company', 'created_by']
 
 
-class HasAdmin(admin.ModelAdmin):
-    list_display = ('skill_id', 'unique_id')
-
-
-class EducationAdmin(admin.ModelAdmin):
-    list_display = ('unique_id', 'degree', 'institute', 'stream', 'sdate', 'edate')
-
-
-class ExperienceAdmin(admin.ModelAdmin):
-    list_display = ('unique_id', 'title', 'status', 'company', 'location', 'sdate', 'edate')
-
-
-class CourseAdmin(admin.ModelAdmin):
-    list_display = ('unique_id', 'course_name', 'sdate', 'edate')
-
-
-class PublicationAdmin(admin.ModelAdmin):
-    list_display = ('unique_id', 'publication_title', 'publisher', 'publication_date')
-
-
-class AchievementAdmin(admin.ModelAdmin):
-    list_display = ('unique_id', 'achievement', 'achievement_type', 'issuer', 'date_earned')
-
-
-class CoauthorAdmin(admin.ModelAdmin):
-    list_display = ('publication_id', 'coauthor_name')
-
-
-class InterestAdmin(admin.ModelAdmin):
-    list_display = ('unique_id', 'interest')
-
-
-class PatentAdmin(admin.ModelAdmin):
-    list_display = ('unique_id', 'patent_name', 'patent_office', 'patent_date')
-
-
-class CoinventorAdmin(admin.ModelAdmin):
-    list_display = ('patent_id', 'coinventor_name')
-
-
-class StudentPlacementAdmin(admin.ModelAdmin):
-    list_display = ('unique_id', 'debar', 'future_aspect', 'placed_type', 'placement_date',
-                    'package')
-
-
-class MessageOfficerAdmin(admin.ModelAdmin):
-    fields = ['timestamp']
-
-
-class NotifyStudentAdmin(admin.ModelAdmin):
-    list_display = ('placement_type', 'company_name', 'ctc')
-
-
-class PlacementStatusAdmin(admin.ModelAdmin):
-    list_display = ('notify_id', 'unique_id', 'placed', 'timestamp')
-
-
-class PlacementRecordAdmin(admin.ModelAdmin):
-    list_display = ('placement_type', 'name', 'ctc', 'year', 'test_score', 'test_type')
-
-
-class StudentRecordAdmin(admin.ModelAdmin):
-    list_display = ('record_id', 'unique_id')
-
-
-class ChairmanVisitAdmin(admin.ModelAdmin):
-    list_display = ('company_name', 'location', 'visiting_date', 'timestamp')
-
-
+@admin.register(PlacementSchedule)
 class PlacementScheduleAdmin(admin.ModelAdmin):
-    list_display = ('title', 'placement_date', 'location', 'time')
+    list_display  = ['job_post', 'round_number', 'round_name', 'scheduled_at', 'venue']
+    list_filter   = ['job_post__company']
+    search_fields = ['round_name', 'job_post__company__name']
 
 
-class ReferenceAdmin(admin.ModelAdmin):
-    list_display = ('reference_name', 'post', 'email', 'mobile_number')
+@admin.register(PlacementApplication)
+class PlacementApplicationAdmin(admin.ModelAdmin):
+    list_display  = ['student', 'job_post', 'status', 'applied_at', 'updated_at']
+    list_filter   = ['status']
+    search_fields = ['student__user__username', 'job_post__company__name']
+    raw_id_fields = ['student', 'job_post']
 
 
-admin.site.register(Project, ProjectAdmin)
-admin.site.register(Skill, SkillAdmin)
-admin.site.register(Has, HasAdmin)
-admin.site.register(Education, EducationAdmin)
-admin.site.register(Experience, ExperienceAdmin)
-admin.site.register(Course, CourseAdmin)
-admin.site.register(Publication, PublicationAdmin)
-admin.site.register(Achievement, AchievementAdmin)
-admin.site.register(Coauthor, CoauthorAdmin)
-admin.site.register(Patent, PatentAdmin)
-admin.site.register(Coinventor, CoinventorAdmin)
-admin.site.register(Interest, InterestAdmin)
-admin.site.register(StudentPlacement, StudentPlacementAdmin)
-admin.site.register(MessageOfficer, MessageOfficerAdmin)
-admin.site.register(NotifyStudent, NotifyStudentAdmin)
-admin.site.register(PlacementStatus, PlacementStatusAdmin)
-admin.site.register(PlacementRecord, PlacementRecordAdmin)
-admin.site.register(StudentRecord, StudentRecordAdmin)
-admin.site.register(ChairmanVisit, ChairmanVisitAdmin)
-admin.site.register(PlacementSchedule, PlacementScheduleAdmin)
-admin.site.register(Role)
-admin.site.register(CompanyDetails)
-admin.site.register(Reference)
-admin.site.register(Extracurricular)
-admin.site.register(Conference)
+@admin.register(PlacementResult)
+class PlacementResultAdmin(admin.ModelAdmin):
+    list_display  = ['application', 'offer_date', 'ctc_offered', 'is_confirmed']
+    list_filter   = ['is_confirmed']
+    raw_id_fields = ['application']
+
+
+@admin.register(StudentPlacementProfile)
+class StudentPlacementProfileAdmin(admin.ModelAdmin):
+    list_display  = ['student', 'is_placed', 'opted_out', 'updated_at']
+    list_filter   = ['is_placed', 'opted_out']
+    search_fields = ['student__user__username']
+    raw_id_fields = ['student']
+
+
+@admin.register(PlacementAnnouncement)
+class PlacementAnnouncementAdmin(admin.ModelAdmin):
+    list_display  = ['title', 'posted_by', 'posted_at', 'is_pinned']
+    list_filter   = ['is_pinned']
+    search_fields = ['title']
+
+
+@admin.register(PlacementStatistics)
+class PlacementStatisticsAdmin(admin.ModelAdmin):
+    list_display  = ['batch_year', 'total_students', 'total_placed', 'total_companies', 'avg_ctc', 'updated_at']
+    ordering      = ['-batch_year']
