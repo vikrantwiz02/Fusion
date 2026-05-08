@@ -1816,7 +1816,7 @@ class UploadGradesProfAPI(APIView):
             # 6) CHECK STUDENT REGISTRATIONS & DETERMINE PROGRAMME FILTERING
             regs = course_registration.objects.filter(
                 course_id=course,
-                working_year=working_year,
+                session=academic_year,
                 semester_type=semester_type
             )
             
