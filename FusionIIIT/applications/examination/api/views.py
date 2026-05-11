@@ -338,13 +338,23 @@ class UniqueRegistrationYearsView(APIView):
                     student_id__in=student_ids_with_programme
                 )
         
-        years = (
+        years = list(
             years_query
             .values_list('session', flat=True)
             .distinct()
             .order_by('session')
         )
-        return Response({'academic_years': list(years)}, status=200)
+
+        from datetime import date
+        today = date.today()
+        if today.month >= 7:
+            current_ay = f"{today.year}-{str(today.year + 1)[-2:]}"
+        else:
+            current_ay = f"{today.year - 1}-{str(today.year)[-2:]}"
+        if current_ay not in years:
+            years.append(current_ay)
+
+        return Response({'academic_years': years}, status=200)
 
 
 @api_view(['POST'])
@@ -1298,11 +1308,12 @@ class GenerateResultAPI(APIView):
                 students = Student.objects.filter(batch_id=batch_id).order_by('id')
 
             # Fetch course_ids for which the grade is not empty.
+            student_roll_nos = students.values_list('id_id', flat=True)
             course_ids = Student_grades.objects.filter(
-                batch=batch_obj.year, 
+                batch=batch_obj.year,
                 semester=semester,
-                roll_no__in = students,
-                semester_type = semester_type
+                roll_no__in=student_roll_nos,
+                semester_type=semester_type
             ).exclude(grade__isnull=True).exclude(grade="").values_list('course_id_id', flat=True).distinct()
             
             courses = Courses.objects.filter(id__in=course_ids)
