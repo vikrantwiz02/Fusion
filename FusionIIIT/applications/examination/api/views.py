@@ -98,6 +98,7 @@ def calculate_spi_for_student(student, selected_semester, semester_type):
                 semester=selected_semester,
                 semester_type=semester_type
             )
+            .select_related('course_id')
             .annotate(
                 semester_type_order=Case(
                     When(semester_type="Odd Semester",    then=0),
@@ -135,6 +136,7 @@ def calculate_cpi_for_student(student, selected_semester, semester_type):
         grades = (
             Student_grades.objects
                 .filter(roll_no=student.id_id, semester__lte=selected_semester)
+                .select_related('course_id')
                 .annotate(
                     semester_type_order=Case(
                         When(semester_type="Odd Semester",  then=0),
@@ -167,7 +169,7 @@ def calculate_cpi_for_student(student, selected_semester, semester_type):
     else :
         grades = Student_grades.objects.filter(
             roll_no=student.id_id, semester__lte=selected_semester,
-        ).exclude(semester_type = 'Summer Semester', semester = selected_semester)
+        ).exclude(semester_type='Summer Semester', semester=selected_semester).select_related('course_id')
 
         registrations = course_registration.objects.select_related('course_id', 'semester_id').filter(
             student_id=student,
@@ -1444,28 +1446,43 @@ class GenerateResultAPI(APIView):
 
             # Fill in student rows, starting from row 5.
             row_idx = 5
+
+            # --- Bulk prefetch to avoid N+1 for 300+ students ---
             User = get_user_model()
+            user_name_map = {}
+            for u in User.objects.filter(username__in=list(student_roll_nos)).only('username', 'first_name', 'last_name'):
+                user_name_map[u.username] = f"{u.first_name} {u.last_name}".strip() or u.username
+
+            all_current_grades = Student_grades.objects.filter(
+                roll_no__in=student_roll_nos,
+                course_id_id__in=course_ids,
+                semester_type=semester_type,
+                semester=semester,
+            ).select_related('course_id')
+            grades_by_student = {}
+            for _g in all_current_grades:
+                grades_by_student.setdefault(_g.roll_no, {})[_g.course_id_id] = _g
+
+            all_regs = course_registration.objects.filter(
+                student_id__in=students,
+                semester_id__semester_no=semester,
+                semester_type=semester_type,
+            ).select_related('course_id', 'semester_id')
+            reg_lookup = {}
+            for _r in all_regs:
+                reg_lookup[(_r.student_id_id, _r.course_id_id, _r.session)] = _r
+            # --- End bulk prefetch ---
+
             for idx, student in enumerate(students, start=1):
                 ws.cell(row=row_idx, column=1).value = idx
                 ws.cell(row=row_idx, column=2).value = student.id_id
 
-                try:
-                    student_user = User.objects.get(username=student.id_id)
-                    student_name = f"{student_user.first_name} {student_user.last_name}".strip() or student_user.username
-                except Exception:
-                    student_name = student.id_id
+                student_name = user_name_map.get(student.id_id, student.id_id)
 
                 ws.cell(row=row_idx, column=3).value = student_name
                 ws.cell(row=row_idx, column=3).alignment = Alignment(horizontal="left", vertical="center")
-                
-                # Get the student’s grade records for the current semester.
-                student_grades = Student_grades.objects.filter(
-                    roll_no=student.id_id,
-                    course_id_id__in=course_ids,
-                    semester_type=semester_type,
-                    semester=semester
-                )
-                grades_map = {g.course_id_id: g for g in student_grades}
+
+                grades_map = grades_by_student.get(student.id_id, {})
                 col_ptr = 4
                 for course in courses:
                     grade_entry = grades_map.get(course.id)
@@ -1473,13 +1490,7 @@ class GenerateResultAPI(APIView):
 
                     remark = '-'
                     if grade_entry:
-                        reg = course_registration.objects.filter(
-                            student_id=student,
-                            course_id=course,
-                            semester_id__semester_no=semester,
-                            semester_type=semester_type,
-                            session=grade_entry.academic_year,
-                        ).first()
+                        reg = reg_lookup.get((student.id_id, course.id, grade_entry.academic_year))
                         if reg:
                             related_regs = gather_related_registrations(reg, semester)
                             attempts = []
@@ -1553,8 +1564,14 @@ class GenerateResultAPI(APIView):
             return response
 
         except Exception as e:
-            traceback.print_exc()
-            return Response({'error': str(e)}, status=500)
+            import traceback as _tb
+            err_text = _tb.format_exc()
+            try:
+                with open('/tmp/fusion_generate_result_error.log', 'a') as _f:
+                    _f.write(err_text + '\n')
+            except Exception:
+                pass
+            return Response({'error': str(e), 'detail': err_text}, status=500)
 
 
 class SubmitAPI(APIView):
