@@ -1731,7 +1731,7 @@ def final_registration_page(request):
         student = Student.objects.get(id=user_details)
         curr_id = student.batch_id.curriculum
         next_sem_id = Semester.objects.get(curriculum=curr_id, semester_no=student.curr_semester_no+1)
-        current_date = date_time.date()
+        current_date = datetime.date.today()
         final_registration_date_flag = get_final_registration_eligibility(current_date)
         student_registration_check = get_student_registrtion_check(student, next_sem_id)
         final_registration_flag = False
