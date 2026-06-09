@@ -1318,7 +1318,7 @@ class GenerateResultAPI(APIView):
                 semester_type=semester_type
             ).exclude(grade__isnull=True).exclude(grade="").values_list('course_id_id', flat=True).distinct()
             
-            courses = Courses.objects.filter(id__in=course_ids)
+            courses = Courses.objects.filter(id__in=course_ids).order_by('code')
             courses_map = {course.id: course.credit for course in courses}
 
             wb = Workbook()
