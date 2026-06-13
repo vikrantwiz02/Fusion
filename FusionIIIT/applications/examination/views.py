@@ -150,6 +150,7 @@ def timetable(request):
     return render(request, '../templates/examination/timetable.html', {})
 
 
+@login_required(login_url='/accounts/login')
 def browse_announcements():
     """
     This function is used to browse Announcements Department-Wise
@@ -181,6 +182,7 @@ def browse_announcements():
     return context
 
 
+@login_required(login_url='/accounts/login')
 def get_to_request(username):
     """
     This function is used to get requests for the receiver
@@ -193,6 +195,7 @@ def get_to_request(username):
     return req
 
 
+@login_required(login_url='/accounts/login')
 def entergrades(request):
     course_id = request.GET.get('course')
     semester_id = request.GET.get('semester')
@@ -213,6 +216,7 @@ def entergrades(request):
     return render(request, 'examination/entergrades.html', context)
 
 
+@login_required(login_url='/accounts/login')
 def verifygrades(request):
     course_id = request.GET.get('course')
     semester_id = request.GET.get('semester')
@@ -227,6 +231,7 @@ def verifygrades(request):
     return render(request, 'examination/verifygrades.html', context)
 
 
+@login_required(login_url='/accounts/login')
 def authenticate(request):  # new
     # Retrieve unique course IDs from hidden_grades
     unique_course_ids = Student_grades.objects.values('course_id').distinct()
@@ -1873,6 +1878,7 @@ def generate_result(request):
 
     return JsonResponse({'error': 'Invalid request method'}, status=405)
 
+@login_required(login_url='/accounts/login')
 def checkresult(request):
     des = request.session.get("currentDesignationSelected")
     if des == "student":
@@ -1885,6 +1891,7 @@ def checkresult(request):
     return render(request, "../templates/examination/check_result.html")
 
 
+@login_required(login_url='/accounts/login')
 def grades_report(request):
     if request.method == 'POST':
         des = request.session.get("currentDesignationSelected")
