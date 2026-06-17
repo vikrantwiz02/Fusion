@@ -1328,14 +1328,6 @@ class GenerateResultAPI(APIView):
             courses = Courses.objects.filter(id__in=course_ids).order_by('code')
             courses_map = {course.id: course.credit for course in courses}
 
-            academic_year = Student_grades.objects.filter(
-                batch=batch_obj.year,
-                semester=semester,
-                roll_no__in=student_roll_nos,
-                semester_type=semester_type,
-            ).exclude(academic_year__isnull=True).exclude(academic_year="") \
-             .values_list('academic_year', flat=True).first() or str(batch_obj.year)
-
             disc_name = batch_obj.discipline.name
             spec_match = re.search(r'\(([^)]+)\)', disc_name)
             if spec_match:
@@ -1343,8 +1335,14 @@ class GenerateResultAPI(APIView):
             else:
                 disc_str = batch_obj.discipline.acronym
             programme_str = re.sub(r'[^a-zA-Z0-9]', '', batch_obj.name)
-            acad_year_str = re.sub(r'[^a-zA-Z0-9\-]', '', academic_year)
-            download_filename = f"{programme_str}_{disc_str}_Sem{semester}_{acad_year_str}.xlsx"
+            batch_year = batch_obj.year
+            start_year = batch_year + (semester - 1) // 2
+            acad_year_str = f"{start_year}-{str(start_year + 1)[2:]}"
+            if semester_type == "Summer Semester":
+                sem_label = f"Summer{semester // 2}"
+            else:
+                sem_label = f"Sem{semester}"
+            download_filename = f"{programme_str}_{disc_str}_{batch_year}_{sem_label}_{acad_year_str}.xlsx"
 
             wb = Workbook()
             ws = wb.active
