@@ -1217,7 +1217,14 @@ class GenerateTranscriptForm(APIView):
         batch_list = [
             {
                 "id": batch.id,
-                "label": f"{batch.name} - {batch.discipline} {batch.year}"
+                "label": f"{batch.name} - {batch.discipline} {batch.year}",
+                "name": batch.name,
+                "discipline": (
+                    f"{batch.discipline.acronym}_{re.sub(r'[^a-zA-Z0-9]', '', m.group(1))}"
+                    if (m := re.search(r'\(([^)]+)\)', batch.discipline.name))
+                    else batch.discipline.acronym
+                ),
+                "year": batch.year,
             }
             for batch in batches_queryset
         ]
@@ -1320,6 +1327,24 @@ class GenerateResultAPI(APIView):
             
             courses = Courses.objects.filter(id__in=course_ids).order_by('code')
             courses_map = {course.id: course.credit for course in courses}
+
+            academic_year = Student_grades.objects.filter(
+                batch=batch_obj.year,
+                semester=semester,
+                roll_no__in=student_roll_nos,
+                semester_type=semester_type,
+            ).exclude(academic_year__isnull=True).exclude(academic_year="") \
+             .values_list('academic_year', flat=True).first() or str(batch_obj.year)
+
+            disc_name = batch_obj.discipline.name
+            spec_match = re.search(r'\(([^)]+)\)', disc_name)
+            if spec_match:
+                disc_str = f"{batch_obj.discipline.acronym}_{re.sub(r'[^a-zA-Z0-9]', '', spec_match.group(1))}"
+            else:
+                disc_str = batch_obj.discipline.acronym
+            programme_str = re.sub(r'[^a-zA-Z0-9]', '', batch_obj.name)
+            acad_year_str = re.sub(r'[^a-zA-Z0-9\-]', '', academic_year)
+            download_filename = f"{programme_str}_{disc_str}_Sem{semester}_{acad_year_str}.xlsx"
 
             wb = Workbook()
             ws = wb.active
@@ -1559,7 +1584,8 @@ class GenerateResultAPI(APIView):
                     ws.cell(row=row, column=col).border = thin_border
 
             response = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-            response['Content-Disposition'] = 'attachment; filename="student_grades.xlsx"'
+            response['Content-Disposition'] = f'attachment; filename="{download_filename}"'
+            response['Access-Control-Expose-Headers'] = 'Content-Disposition'
             wb.save(response)
             return response
 
