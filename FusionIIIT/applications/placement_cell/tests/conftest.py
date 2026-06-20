@@ -53,6 +53,10 @@ class PlacementCellSpecBase(TestCase):
             username="student2",
             department=self.department_ece,
         )
+        # self.officer performs Training & Placement Officer actions across the
+        # suite, so grant the designation here. Denial tests use student/alumni
+        # users (never self.officer), so this does not weaken them.
+        self._create_officer_designation()
 
     def api_get(self, path, *, user=None, data=None):
         client = APIClient()
@@ -85,7 +89,10 @@ class PlacementCellSpecBase(TestCase):
             email="{}@example.com".format(username),
             first_name=username,
         )
-        extra = ExtraInfo.objects.get(user=user)
+        extra, _ = ExtraInfo.objects.get_or_create(
+            user=user,
+            defaults={"id": roll_no, "user_type": "student", "department": department},
+        )
         extra.user_type = "student"
         extra.department = department
         extra.save(update_fields=["user_type", "department"])
