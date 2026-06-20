@@ -2,6 +2,46 @@
 
 Reliable, self-contained tests for the `placement_cell` API module.
 
+## Roles
+
+The placement module recognises four roles (the user's selected designation,
+exposed to the frontend as `state.user.role`):
+
+| Role (designation)  | What the role can do |
+|---------------------|----------------------|
+| `placement officer` | TPO: manage placement schedules, applications, interview rounds, debarments, restrictions, statistics, CV downloads and notifications |
+| `placement chairman`| Admin: manage placement policies plus the officer capabilities |
+| `student`           | Apply for placements, manage placement profile, view schedule/offers, download CV |
+| `alumni`            | Alumni hub: alumni profile, referrals and mentorship sessions |
+
+How roles are resolved:
+
+- **Backend** authorizes via `HoldsDesignation(working=user, designation__name=…)`;
+  `selectors.is_tpo` is true for `placement officer`/`placement chairman`.
+- **Sidebar visibility** comes from `ModuleAccess.placement_cell` for the
+  designation (surfaced by `/api/auth/me`).
+- **Frontend** picks the tab set in `PlacementCellPage` from `state.user.role`.
+
+### Role accounts
+
+`manage.py setup_placement_roles` creates one idempotent login per role and
+enables `ModuleAccess.placement_cell` for each:
+
+| Username             | Role                |
+|----------------------|---------------------|
+| `placement_officer`  | placement officer   |
+| `placement_chairman` | placement chairman  |
+| `placement_student`  | student             |
+| `placement_alumni`   | alumni              |
+
+Create / refresh them (the password is supplied at runtime and is **not** stored
+in this repo — pass `--password` or set `PLACEMENT_ROLE_PASSWORD`):
+
+```bash
+cd FusionIIIT
+python manage.py setup_placement_roles --password '<password>'
+```
+
 ## Running
 
 Tests use a dedicated settings module (`FusionIIIT/test_settings.py`) that
