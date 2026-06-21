@@ -3757,28 +3757,61 @@ def placement_cpi_batches_api(request):
 
 
 def _published_cpi_rows(batch_id):
-    """Build per-student published-CPI rows for a batch (empty if not published)."""
+    """Build per-student published-CPI rows for a batch (empty if not published).
+    """
+    from django.core.cache import cache
     from applications.examination.models import ResultAnnouncement
+    from applications.examination.api.views import calculate_cpi_for_student
 
-    has_published = ResultAnnouncement.objects.filter(
-        batch_id=batch_id, announced=True
-    ).exists()
-    if not has_published:
+    latest = (
+        ResultAnnouncement.objects
+        .filter(batch_id=batch_id, announced=True)
+        .order_by('-semester')
+        .first()
+    )
+    if latest is None:
         return []
 
-    students = Student.objects.filter(batch_id=batch_id).select_related('id__user')
-    extra_pks = [student.id_id for student in students]
+    students = list(
+        Student.objects.filter(batch_id=batch_id).select_related('id__user')
+    )
+    if not students:
+        return []
 
+    extra_pks = [student.id_id for student in students]
     offcampus_map = {}
-    for ocp in OffCampusPlacement.objects.filter(
-        student_id__in=extra_pks
-    ).select_related('student'):
+    for ocp in OffCampusPlacement.objects.filter(student_id__in=extra_pks):
         offcampus_map.setdefault(ocp.student_id, []).append(ocp.company_name)
 
+    semester = latest.semester
+    semester_type = latest.semester_type
+    # Keep cache keys free of spaces/colons so they stay valid on memcached too.
+    semester_slug = (semester_type or 'na').replace(' ', '-')
+    key_by_pk = {
+        student.pk: 'pc-cpi-v1-{}-{}-{}'.format(
+            student.id.user.username, semester, semester_slug
+        )
+        for student in students
+    }
+    cached = cache.get_many(list(key_by_pk.values()))
+
+    to_cache = {}
     rows = []
     for student in students:
         extra = student.id  # ExtraInfo
-        cpi = selectors.get_student_published_cpi(extra)
+        key = key_by_pk[student.pk]
+        if key in cached:
+            cpi = cached[key]
+        else:
+            try:
+                cpi_value, _, _ = calculate_cpi_for_student(
+                    student, semester, semester_type
+                )
+            except Exception:
+                cpi_value = None
+            cpi = str(cpi_value) if cpi_value is not None else None
+            if cpi is not None:
+                to_cache[key] = cpi
         if cpi is None:
             continue
         rows.append(
@@ -3788,10 +3821,12 @@ def _published_cpi_rows(batch_id):
                     extra.user.first_name, extra.user.last_name
                 ).strip(),
                 'email': extra.user.email,
-                'cpi': str(cpi),
+                'cpi': cpi,
                 'off_campus': offcampus_map.get(extra.pk, []),
             }
         )
+    if to_cache:
+        cache.set_many(to_cache, 60 * 60)
     return rows
 
 
