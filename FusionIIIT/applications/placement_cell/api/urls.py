@@ -62,4 +62,6 @@ urlpatterns = [
     # Published-CPI student view + export API endpoints
     url(r"^api/cpi-batches/$", views.placement_cpi_batches_api, name="placement_cpi_batches_api"),
     url(r"^api/cpi-students/$", views.placement_cpi_students_api, name="placement_cpi_students_api"),
+    # Branch (department) reference list for placement forms
+    url(r"^api/branches/$", views.placement_branches_api, name="placement_branches_api"),
 ]

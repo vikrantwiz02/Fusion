@@ -3875,3 +3875,25 @@ def placement_cpi_students_api(request):
 
     return Response(rows)
 
+
+# --- Branch (department) reference list for placement forms ---
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
+def placement_branches_api(request):
+    """Distinct academic department names that students actually belong to.
+
+    Branch eligibility compares a schedule's branch against the student's
+    department name, so the placement-event form populates its branch options
+    from this list instead of a hard-coded one (which had drifted from the real
+    department names and silently broke branch eligibility).
+    """
+    names = (
+        Student.objects
+        .exclude(id__department__isnull=True)
+        .values_list('id__department__name', flat=True)
+        .distinct()
+    )
+    branches = sorted({name for name in names if name})
+    return Response(branches)
+
