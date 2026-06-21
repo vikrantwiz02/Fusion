@@ -64,4 +64,7 @@ urlpatterns = [
     url(r"^api/cpi-students/$", views.placement_cpi_students_api, name="placement_cpi_students_api"),
     # Branch (department) reference list for placement forms
     url(r"^api/branches/$", views.placement_branches_api, name="placement_branches_api"),
+    # Free-form placement calendar events (Google-Calendar style)
+    url(r"^api/calendar-events/$", views.placement_calendar_events_api, name="placement_calendar_events_api"),
+    url(r"^api/calendar-events/(?P<event_id>[0-9]+)/$", views.placement_calendar_event_detail_api, name="placement_calendar_event_detail_api"),
 ]

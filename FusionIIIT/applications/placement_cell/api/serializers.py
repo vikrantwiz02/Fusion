@@ -6,7 +6,8 @@ from applications.placement_cell.models import (Achievement, Course, Education,
                                                 Project, Publication, Skill,
                                                 PlacementAppeal, PlacementStatus,
                                                 NotifyStudent, PlacementAnnouncement,
-                                                OffCampusPlacement)
+                                                OffCampusPlacement,
+                                                PlacementCalendarEvent)
 
 
 class PlacementAppealSerializer(serializers.ModelSerializer):
@@ -153,3 +154,12 @@ class OffCampusPlacementWriteSerializer(serializers.ModelSerializer):
         model = OffCampusPlacement
         fields = ('student', 'company_name', 'role', 'offer_type',
                   'ctc', 'stipend', 'offer_date', 'notes')
+
+
+class PlacementCalendarEventSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = PlacementCalendarEvent
+        fields = ('id', 'title', 'description', 'start', 'end', 'all_day',
+                  'category', 'location', 'created_at')
+        read_only_fields = ('id', 'created_at')

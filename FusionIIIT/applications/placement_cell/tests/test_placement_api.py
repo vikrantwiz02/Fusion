@@ -37,6 +37,7 @@ from applications.placement_cell.models import (
     NotifyStudent,
     OffCampusPlacement,
     PlacementAnnouncement,
+    PlacementCalendarEvent,
     PlacementRestriction,
     PlacementSchedule,
 )
@@ -389,3 +390,67 @@ class PublishedCpiApiTests(PlacementBaseTest):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "application/ms-excel")
         self.assertIn("attachment", response["Content-Disposition"])
+
+
+class CalendarEventApiTests(PlacementBaseTest):
+    """Calendar events: readable by any role, writable only by the TPO."""
+
+    def test_listing_requires_authentication(self):
+        response = APIClient().get(
+            reverse("placement:placement_calendar_events_api")
+        )
+        self.assertIn(response.status_code, (401, 403))
+
+    def test_any_authenticated_role_can_list(self):
+        PlacementCalendarEvent.objects.create(
+            title="Info session", start=datetime.datetime(2026, 6, 25, 10, 0)
+        )
+        response = self._client(self.student_user).get(
+            reverse("placement:placement_calendar_events_api")
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 1)
+
+    def test_student_cannot_create(self):
+        response = self._client(self.student_user).post(
+            reverse("placement:placement_calendar_events_api"),
+            data={"title": "X", "start": "2026-06-25T10:00"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(PlacementCalendarEvent.objects.count(), 0)
+
+    def test_officer_can_create_update_and_delete(self):
+        client = self._client(self.officer_user)
+        created = client.post(
+            reverse("placement:placement_calendar_events_api"),
+            data={
+                "title": "Pre-placement talk",
+                "start": "2026-06-25T10:00",
+                "category": "event",
+            },
+            format="json",
+        )
+        self.assertEqual(created.status_code, 201)
+        event_id = created.data["id"]
+        self.assertEqual(
+            PlacementCalendarEvent.objects.get().created_by, self.officer_user
+        )
+
+        updated = client.patch(
+            reverse(
+                "placement:placement_calendar_event_detail_api", args=[event_id]
+            ),
+            data={"title": "Renamed talk"},
+            format="json",
+        )
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(updated.data["title"], "Renamed talk")
+
+        deleted = client.delete(
+            reverse(
+                "placement:placement_calendar_event_detail_api", args=[event_id]
+            )
+        )
+        self.assertEqual(deleted.status_code, 204)
+        self.assertEqual(PlacementCalendarEvent.objects.count(), 0)

@@ -902,3 +902,49 @@ class OffCampusPlacement(models.Model):
         return '{} - {} ({})'.format(
             self.student.user.username, self.company_name, self.offer_type
         )
+
+
+class PlacementCalendarEvent(models.Model):
+    """A free-form calendar entry the placement cell can add by clicking a date.
+
+    These are separate from drive schedules/rounds: the TPO can drop any note,
+    deadline or event onto the placement calendar (interview slots, info
+    sessions, document deadlines, etc.). Students only ever read them.
+    """
+
+    EVENT = 'event'
+    DRIVE = 'drive'
+    TEST = 'test'
+    INTERVIEW = 'interview'
+    DEADLINE = 'deadline'
+    OTHER = 'other'
+    CATEGORY_CHOICES = (
+        (EVENT, 'Event'),
+        (DRIVE, 'Drive'),
+        (TEST, 'Online Test'),
+        (INTERVIEW, 'Interview'),
+        (DEADLINE, 'Deadline'),
+        (OTHER, 'Other'),
+    )
+
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    start = models.DateTimeField()
+    end = models.DateTimeField(null=True, blank=True)
+    all_day = models.BooleanField(default=False)
+    category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default=EVENT)
+    location = models.CharField(max_length=255, blank=True)
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='placement_calendar_events',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ('start', 'id')
+
+    def __str__(self):
+        return self.title

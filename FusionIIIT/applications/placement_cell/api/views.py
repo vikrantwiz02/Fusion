@@ -88,7 +88,8 @@ from .serializers import (PlacementAppealSerializer,
                           PlacementAnnouncementSerializer,
                           PlacementAnnouncementWriteSerializer,
                           OffCampusPlacementSerializer,
-                          OffCampusPlacementWriteSerializer)
+                          OffCampusPlacementWriteSerializer,
+                          PlacementCalendarEventSerializer)
 from applications.placement_cell.models import PlacementAppeal
 
 # PlacementAppeal API
@@ -236,7 +237,7 @@ from ..models import (Achievement, ChairmanVisit, Course, Education, Experience,
                      PlacementProfileAuditLog, PlacementNotificationPreference,
                      PlacementReportSchedule, AlumniConnection, AlumniMentorshipSession, AlumniProfile,
                      AlumniReferral, PlacementApplicationTimeline, PlacementInterviewSchedule,
-                     PlacementAnnouncement, OffCampusPlacement)
+                     PlacementAnnouncement, OffCampusPlacement, PlacementCalendarEvent)
 '''
     @variables:
             user - logged in user
@@ -3896,4 +3897,54 @@ def placement_branches_api(request):
     )
     branches = sorted({name for name in names if name})
     return Response(branches)
+
+
+# --- Placement calendar events (free-form, Google-Calendar style) ---
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
+def placement_calendar_events_api(request):
+    """List placement calendar events (any authenticated user) or add one (TPO)."""
+    if request.method == 'GET':
+        events = PlacementCalendarEvent.objects.all()
+        return Response(PlacementCalendarEventSerializer(events, many=True).data)
+
+    if not _is_tpo_user(request.user):
+        return Response(
+            {'detail': 'Only TPO users can add calendar events.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    serializer = PlacementCalendarEventSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    event = serializer.save(created_by=request.user)
+    return Response(
+        PlacementCalendarEventSerializer(event).data,
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(['PUT', 'PATCH', 'DELETE'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
+def placement_calendar_event_detail_api(request, event_id):
+    """Update or delete a placement calendar event (TPO only)."""
+    if not _is_tpo_user(request.user):
+        return Response(
+            {'detail': 'Only TPO users can manage calendar events.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    event = get_object_or_404(PlacementCalendarEvent, pk=event_id)
+
+    if request.method == 'DELETE':
+        event.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    serializer = PlacementCalendarEventSerializer(
+        event, data=request.data, partial=request.method == 'PATCH'
+    )
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    serializer.save()
+    return Response(serializer.data)
 
