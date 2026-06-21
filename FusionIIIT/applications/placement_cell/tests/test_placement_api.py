@@ -348,3 +348,44 @@ class OffCampusPlacementApiTests(PlacementBaseTest):
         )
         self.assertEqual(response.status_code, 204)
         self.assertEqual(OffCampusPlacement.objects.count(), 0)
+
+
+class PublishedCpiApiTests(PlacementBaseTest):
+    """Published-CPI batch list, student list and Excel export are TPO-only."""
+
+    CPI_ROUTES = ["placement_cpi_batches_api", "placement_cpi_students_api"]
+
+    def test_cpi_routes_require_authentication(self):
+        client = APIClient()
+        for name in self.CPI_ROUTES:
+            response = client.get(reverse("placement:{}".format(name)))
+            self.assertIn(response.status_code, (401, 403))
+
+    def test_students_are_denied_cpi_routes(self):
+        client = self._client(self.student_user)
+        for name in self.CPI_ROUTES:
+            response = client.get(reverse("placement:{}".format(name)))
+            self.assertEqual(response.status_code, 403)
+
+    def test_officer_can_read_cpi_batches(self):
+        response = self._client(self.officer_user).get(
+            reverse("placement:placement_cpi_batches_api")
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIsInstance(response.data, list)
+
+    def test_cpi_students_without_batch_returns_empty_list(self):
+        response = self._client(self.officer_user).get(
+            reverse("placement:placement_cpi_students_api")
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, [])
+
+    def test_cpi_students_excel_export_returns_workbook(self):
+        response = self._client(self.officer_user).get(
+            reverse("placement:placement_cpi_students_api"),
+            {"batch_id": 1, "export": "excel"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/ms-excel")
+        self.assertIn("attachment", response["Content-Disposition"])

@@ -3735,3 +3735,108 @@ def offcampus_placement_detail_api(request, placement_id):
     OffCampusPlacement.objects.filter(pk=placement_id).delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
 
+
+# --- Published-CPI student view + export API ---
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
+def placement_cpi_batches_api(request):
+    """List batches that have an announced result (for the CPI batch filter)."""
+    if not _is_tpo_user(request.user):
+        return Response(
+            {'detail': 'Only TPO and chairman users can view published CPI data.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    batches = selectors.batches_with_published_results()
+    return Response(
+        [
+            {'id': batch.id, 'label': str(batch), 'year': batch.year}
+            for batch in batches
+        ]
+    )
+
+
+def _published_cpi_rows(batch_id):
+    """Build per-student published-CPI rows for a batch (empty if not published)."""
+    from applications.examination.models import ResultAnnouncement
+
+    has_published = ResultAnnouncement.objects.filter(
+        batch_id=batch_id, announced=True
+    ).exists()
+    if not has_published:
+        return []
+
+    students = Student.objects.filter(batch_id=batch_id).select_related('id__user')
+    extra_pks = [student.id_id for student in students]
+
+    offcampus_map = {}
+    for ocp in OffCampusPlacement.objects.filter(
+        student_id__in=extra_pks
+    ).select_related('student'):
+        offcampus_map.setdefault(ocp.student_id, []).append(ocp.company_name)
+
+    rows = []
+    for student in students:
+        extra = student.id  # ExtraInfo
+        cpi = selectors.get_student_published_cpi(extra)
+        if cpi is None:
+            continue
+        rows.append(
+            {
+                'roll_no': extra.user.username,
+                'student_name': '{} {}'.format(
+                    extra.user.first_name, extra.user.last_name
+                ).strip(),
+                'email': extra.user.email,
+                'cpi': str(cpi),
+                'off_campus': offcampus_map.get(extra.pk, []),
+            }
+        )
+    return rows
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
+def placement_cpi_students_api(request):
+    """Students of a batch with their published CPI and off-campus companies.
+
+    Requires ``?batch_id=``; without it an empty list is returned. Pass
+    ``?export=excel`` to download the same rows as an ``.xls`` workbook.
+    Restricted to TPO and chairman users.
+    """
+    if not _is_tpo_user(request.user):
+        return Response(
+            {'detail': 'Only TPO and chairman users can view published CPI data.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    batch_id = request.query_params.get('batch_id')
+    if not batch_id:
+        return Response([])
+
+    rows = _published_cpi_rows(batch_id)
+
+    if request.query_params.get('export') == 'excel':
+        response = HttpResponse(content_type='application/ms-excel')
+        response['Content-Disposition'] = (
+            'attachment; filename="published_cpi_batch_{}.xls"'.format(batch_id)
+        )
+        workbook = xlwt.Workbook(encoding='utf-8')
+        worksheet = workbook.add_sheet('Published CPI')
+        headers = ['Roll No', 'Name', 'Email', 'CPI', 'Off-Campus']
+        header_style = xlwt.XFStyle()
+        header_style.font.bold = True
+        for index, header in enumerate(headers):
+            worksheet.write(0, index, header, header_style)
+        for row_index, row in enumerate(rows, start=1):
+            worksheet.write(row_index, 0, row['roll_no'])
+            worksheet.write(row_index, 1, row['student_name'])
+            worksheet.write(row_index, 2, row['email'])
+            worksheet.write(row_index, 3, row['cpi'])
+            worksheet.write(row_index, 4, ', '.join(row['off_campus']))
+        workbook.save(response)
+        return response
+
+    return Response(rows)
+

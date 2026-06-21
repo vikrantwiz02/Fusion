@@ -59,4 +59,7 @@ urlpatterns = [
     # Off-Campus Placements API endpoints
     url(r"^api/offcampus/$", views.offcampus_placements_api, name="offcampus_placements_api"),
     url(r"^api/offcampus/(?P<placement_id>[0-9]+)/$", views.offcampus_placement_detail_api, name="offcampus_placement_detail_api"),
+    # Published-CPI student view + export API endpoints
+    url(r"^api/cpi-batches/$", views.placement_cpi_batches_api, name="placement_cpi_batches_api"),
+    url(r"^api/cpi-students/$", views.placement_cpi_students_api, name="placement_cpi_students_api"),
 ]

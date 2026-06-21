@@ -132,3 +132,56 @@ def is_alumni(user):
 
 def is_tpo(user):
     return get_designation_queryset(user, "placement officer").exists() or get_designation_queryset(user, "placement chairman").exists()
+
+
+def get_student_published_cpi(student_extra_info):
+    """Return a student's CPI from the latest *published* semester result.
+
+    Computes the CPI from the examination module's announced results so the
+    placement cell reflects officially published academic performance rather
+    than the static ``Student.cpi`` snapshot. Returns ``None`` when the
+    student's batch has no announced result yet (or anything goes wrong).
+    """
+    try:
+        from applications.examination.models import ResultAnnouncement
+        from applications.examination.api.views import calculate_cpi_for_student
+
+        student_obj = Student.objects.select_related('id').get(id=student_extra_info)
+
+        latest = (
+            ResultAnnouncement.objects
+            .filter(batch=student_obj.batch_id, announced=True)
+            .order_by('-semester')
+            .first()
+        )
+        if not latest:
+            return None
+
+        cpi_value, _, _ = calculate_cpi_for_student(
+            student_obj, latest.semester, latest.semester_type
+        )
+        return cpi_value
+    except Exception:
+        return None
+
+
+def batches_with_published_results():
+    """Batches that have at least one announced result, newest first.
+
+    Used to populate the batch filter for the published-CPI student view.
+    """
+    from applications.examination.models import ResultAnnouncement
+    from applications.programme_curriculum.models import Batch
+
+    batch_ids = (
+        ResultAnnouncement.objects
+        .filter(announced=True)
+        .values_list('batch_id', flat=True)
+        .distinct()
+    )
+    return (
+        Batch.objects
+        .filter(id__in=batch_ids)
+        .select_related('discipline')
+        .order_by('-year', 'name')
+    )
