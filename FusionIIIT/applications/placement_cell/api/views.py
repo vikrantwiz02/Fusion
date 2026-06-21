@@ -3847,9 +3847,18 @@ def placement_cpi_students_api(request):
             status=status.HTTP_403_FORBIDDEN,
         )
 
-    batch_id = request.query_params.get('batch_id')
-    if not batch_id:
+    raw_batch_id = request.query_params.get('batch_id')
+    if not raw_batch_id:
         return Response([])
+    # Validate as an integer so it cannot be reflected into the response
+    # (filename header) or reach the ORM filter as arbitrary input.
+    try:
+        batch_id = int(raw_batch_id)
+    except (TypeError, ValueError):
+        return Response(
+            {'detail': 'batch_id must be an integer.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
     rows = _published_cpi_rows(batch_id)
 
