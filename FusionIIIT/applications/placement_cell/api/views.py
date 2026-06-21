@@ -84,7 +84,11 @@ def offer_respond_api(request, offer_id):
         return Response({'message': 'Offer declined successfully.'}, status=status.HTTP_200_OK)
     else:
         return Response({'detail': 'Invalid action.'}, status=status.HTTP_400_BAD_REQUEST)
-from .serializers import PlacementAppealSerializer
+from .serializers import (PlacementAppealSerializer,
+                          PlacementAnnouncementSerializer,
+                          PlacementAnnouncementWriteSerializer,
+                          OffCampusPlacementSerializer,
+                          OffCampusPlacementWriteSerializer)
 from applications.placement_cell.models import PlacementAppeal
 
 # PlacementAppeal API
@@ -231,7 +235,8 @@ from ..models import (Achievement, ChairmanVisit, Course, Education, Experience,
                      PlacementRound, PlacementRestriction, PlacementPolicy, PlacementProfileDocument,
                      PlacementProfileAuditLog, PlacementNotificationPreference,
                      PlacementReportSchedule, AlumniConnection, AlumniMentorshipSession, AlumniProfile,
-                     AlumniReferral, PlacementApplicationTimeline, PlacementInterviewSchedule)
+                     AlumniReferral, PlacementApplicationTimeline, PlacementInterviewSchedule,
+                     PlacementAnnouncement, OffCampusPlacement)
 '''
     @variables:
             user - logged in user
@@ -3636,4 +3641,97 @@ def send_notification_api(request):
     )
 
     return Response({'message': 'Notification sent successfully.'}, status=status.HTTP_200_OK)
+
+
+# --- Placement Announcements API ---
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
+def placement_announcements_api(request):
+    """List placement announcements (any authenticated user) or post one (TPO only)."""
+    if request.method == 'GET':
+        announcements = PlacementAnnouncement.objects.all()
+        return Response(PlacementAnnouncementSerializer(announcements, many=True).data)
+
+    if not _is_tpo_user(request.user):
+        return Response(
+            {'detail': 'Only TPO users can post announcements.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    serializer = PlacementAnnouncementWriteSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    announcement = PlacementAnnouncement.objects.create(
+        posted_by=request.user, **serializer.validated_data
+    )
+    return Response(
+        PlacementAnnouncementSerializer(announcement).data,
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
+def placement_announcement_detail_api(request, announcement_id):
+    """Delete a placement announcement (TPO only)."""
+    if not _is_tpo_user(request.user):
+        return Response(
+            {'detail': 'Only TPO users can delete announcements.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    PlacementAnnouncement.objects.filter(pk=announcement_id).delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# --- Off-Campus Placements API ---
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
+def offcampus_placements_api(request):
+    """List off-campus placement records or record a new one against a roll number (TPO only)."""
+    if not _is_tpo_user(request.user):
+        return Response(
+            {'detail': 'Only TPO users can manage off-campus placements.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    if request.method == 'GET':
+        placements = OffCampusPlacement.objects.select_related('student__user').all()
+        return Response(OffCampusPlacementSerializer(placements, many=True).data)
+
+    roll_no = str(request.data.get('roll_no', '')).strip()
+    if not roll_no:
+        return Response({'detail': 'roll_no is required.'}, status=status.HTTP_400_BAD_REQUEST)
+    student = ExtraInfo.objects.filter(user__username=roll_no).select_related('user').first()
+    if not student:
+        return Response(
+            {'detail': 'No student found with roll number {}.'.format(roll_no)},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    payload = {key: value for key, value in request.data.items() if key != 'roll_no'}
+    payload['student'] = student.pk
+    serializer = OffCampusPlacementWriteSerializer(data=payload)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    placement = serializer.save(added_by=request.user)
+    return Response(
+        OffCampusPlacementSerializer(placement).data,
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
+def offcampus_placement_detail_api(request, placement_id):
+    """Delete an off-campus placement record (TPO only)."""
+    if not _is_tpo_user(request.user):
+        return Response(
+            {'detail': 'Only TPO users can manage off-campus placements.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    OffCampusPlacement.objects.filter(pk=placement_id).delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
 

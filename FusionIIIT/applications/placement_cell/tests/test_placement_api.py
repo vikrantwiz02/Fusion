@@ -35,6 +35,8 @@ from applications.placement_cell.api import urls as placement_urls
 from applications.placement_cell.models import (
     Education,
     NotifyStudent,
+    OffCampusPlacement,
+    PlacementAnnouncement,
     PlacementRestriction,
     PlacementSchedule,
 )
@@ -235,3 +237,114 @@ class AuthorizationTests(PlacementBaseTest):
         listed = client.get(reverse("placement:restrictions_api"))
         self.assertEqual(listed.status_code, 200)
         self.assertEqual(len(listed.data), 1)
+
+
+class AnnouncementApiTests(PlacementBaseTest):
+    """Announcements: readable by any authenticated role, writable by the TPO only."""
+
+    def test_announcements_require_authentication(self):
+        response = APIClient().get(reverse("placement:placement_announcements_api"))
+        self.assertIn(response.status_code, (401, 403))
+
+    def test_any_authenticated_role_can_list_announcements(self):
+        PlacementAnnouncement.objects.create(title="Drive", body="Acme on campus")
+        response = self._client(self.student_user).get(
+            reverse("placement:placement_announcements_api")
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 1)
+
+    def test_student_cannot_post_announcement(self):
+        response = self._client(self.student_user).post(
+            reverse("placement:placement_announcements_api"),
+            data={"title": "X", "body": "Y"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(PlacementAnnouncement.objects.count(), 0)
+
+    def test_officer_can_post_and_delete_announcement(self):
+        client = self._client(self.officer_user)
+        created = client.post(
+            reverse("placement:placement_announcements_api"),
+            data={"title": "Drive", "body": "Acme on campus", "is_pinned": True},
+            format="json",
+        )
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(PlacementAnnouncement.objects.count(), 1)
+        announcement = PlacementAnnouncement.objects.get()
+        self.assertEqual(announcement.posted_by, self.officer_user)
+
+        deleted = client.delete(
+            reverse(
+                "placement:placement_announcement_detail_api",
+                args=[announcement.pk],
+            )
+        )
+        self.assertEqual(deleted.status_code, 204)
+        self.assertEqual(PlacementAnnouncement.objects.count(), 0)
+
+
+class OffCampusPlacementApiTests(PlacementBaseTest):
+    """Off-campus placements are managed entirely by the TPO."""
+
+    def test_students_are_denied(self):
+        response = self._client(self.student_user).get(
+            reverse("placement:offcampus_placements_api")
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_officer_can_record_offcampus_against_roll_number(self):
+        client = self._client(self.officer_user)
+        created = client.post(
+            reverse("placement:offcampus_placements_api"),
+            data={
+                "roll_no": self.student_user.username,
+                "company_name": "Acme Corp",
+                "role": "SDE",
+                "offer_type": "placement",
+                "ctc": "18.00",
+                "offer_date": "2026-06-01",
+            },
+            format="json",
+        )
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(OffCampusPlacement.objects.count(), 1)
+        record = OffCampusPlacement.objects.get()
+        self.assertEqual(record.added_by, self.officer_user)
+        self.assertEqual(created.data["roll_no"], self.student_user.username)
+
+        listed = client.get(reverse("placement:offcampus_placements_api"))
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(len(listed.data), 1)
+
+    def test_unknown_roll_number_is_rejected(self):
+        response = self._client(self.officer_user).post(
+            reverse("placement:offcampus_placements_api"),
+            data={
+                "roll_no": "DOES_NOT_EXIST",
+                "company_name": "Acme",
+                "role": "SDE",
+                "offer_date": "2026-06-01",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(OffCampusPlacement.objects.count(), 0)
+
+    def test_officer_can_delete_offcampus_record(self):
+        student_extra = ExtraInfo.objects.get(user=self.student_user)
+        record = OffCampusPlacement.objects.create(
+            student=student_extra,
+            company_name="Acme",
+            role="SDE",
+            offer_date=datetime.date(2026, 6, 1),
+            added_by=self.officer_user,
+        )
+        response = self._client(self.officer_user).delete(
+            reverse(
+                "placement:offcampus_placement_detail_api", args=[record.pk]
+            )
+        )
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(OffCampusPlacement.objects.count(), 0)

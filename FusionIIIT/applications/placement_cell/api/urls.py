@@ -53,4 +53,10 @@ urlpatterns = [
     # PlacementAppeal API endpoints
     url(r"^api/placement-appeals/$", views.placement_appeal_list_create_api, name="placement_appeal_list_create_api"),
     url(r"^api/placement-appeals/(?P<pk>[0-9]+)/$", views.placement_appeal_detail_api, name="placement_appeal_detail_api"),
+    # Placement Announcements API endpoints
+    url(r"^api/announcements/$", views.placement_announcements_api, name="placement_announcements_api"),
+    url(r"^api/announcements/(?P<announcement_id>[0-9]+)/$", views.placement_announcement_detail_api, name="placement_announcement_detail_api"),
+    # Off-Campus Placements API endpoints
+    url(r"^api/offcampus/$", views.offcampus_placements_api, name="offcampus_placements_api"),
+    url(r"^api/offcampus/(?P<placement_id>[0-9]+)/$", views.offcampus_placement_detail_api, name="offcampus_placement_detail_api"),
 ]

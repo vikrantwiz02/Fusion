@@ -10,6 +10,7 @@ from django.utils import timezone
 from django.utils.translation import gettext as _
 
 from applications.academic_information.models import Student
+from applications.globals.models import ExtraInfo
 
 User = get_user_model()
 
@@ -839,3 +840,65 @@ class AlumniConnection(models.Model):
 
     def __str__(self):
         return '{} - {}'.format(self.alumni.user.username, self.student.id.id)
+
+
+class PlacementAnnouncement(models.Model):
+    """A placement-cell announcement broadcast to all roles, postable by the TPO."""
+
+    title = models.CharField(max_length=300)
+    body = models.TextField()
+    posted_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='placement_announcements',
+    )
+    posted_at = models.DateTimeField(auto_now_add=True)
+    is_pinned = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ('-is_pinned', '-posted_at')
+
+    def __str__(self):
+        return self.title
+
+
+class OffCampusPlacement(models.Model):
+    """An off-campus offer recorded by the TPO against a student roll number."""
+
+    PLACEMENT = 'placement'
+    INTERNSHIP = 'internship'
+    TYPE_CHOICES = (
+        (PLACEMENT, 'Placement'),
+        (INTERNSHIP, 'Internship'),
+    )
+
+    student = models.ForeignKey(
+        ExtraInfo,
+        on_delete=models.CASCADE,
+        related_name='offcampus_placements',
+    )
+    company_name = models.CharField(max_length=255)
+    role = models.CharField(max_length=200)
+    offer_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default=PLACEMENT)
+    ctc = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    stipend = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    offer_date = models.DateField()
+    notes = models.TextField(blank=True)
+    added_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='added_offcampus_placements',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ('-offer_date', '-id')
+
+    def __str__(self):
+        return '{} - {} ({})'.format(
+            self.student.user.username, self.company_name, self.offer_type
+        )
