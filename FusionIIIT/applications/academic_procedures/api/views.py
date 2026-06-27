@@ -3767,8 +3767,24 @@ HOD_SPECIALIZATION_MAPPING = {
 }
 
 def check_role(request, required_role):
-    role = request.query_params.get('role') if request.method=='GET' else request.data.get('role')
-    return role == required_role
+    # Authorize from the user's real designation, never a client-supplied role
+    from django.db.models import Q
+    user = request.user
+    if not getattr(user, "is_authenticated", False):
+        return False
+    held = HoldsDesignation.objects.filter(Q(working=user) | Q(user=user))
+    if required_role == 'hod':
+        return held.filter(designation__name__istartswith='HOD').exists()
+    if required_role == 'faculty':
+        return (
+            Faculty.objects.filter(id__user=user).exists()
+            or held.filter(
+                designation__name__in=[
+                    'Professor', 'Associate Professor', 'Assistant Professor',
+                ]
+            ).exists()
+        )
+    return held.filter(designation__name=required_role).exists()
 
 def get_allowed_specs(user):
     """

@@ -33,6 +33,7 @@ import re
 from notification.views import prog_and_curr_notif
 # from applications.academic_information.models import Student
 from applications.globals.models import (DepartmentInfo, Designation,ExtraInfo, Faculty, HoldsDesignation)
+from applications.globals.access import IsAcadAdminOrDean, require_designation
 # ------------module-functions---------------#
 
 @login_required(login_url='/accounts/login')
@@ -467,6 +468,7 @@ def view_all_batches(request):
 
 # @api_view(['GET'])
 # @login_required(login_url='/accounts/login')
+@require_designation("acadadmin", "Dean Academic")
 def admin_view_all_programmes(request):
     """
     API to return all programmes (UG, PG, PhD) for an admin user.
@@ -493,6 +495,7 @@ def admin_view_all_programmes(request):
     return JsonResponse(response_data, status=200, safe=False)
 
 @api_view(['GET'])
+@permission_classes([IsAcadAdminOrDean])
 def admin_view_curriculums_of_a_programme(request, programme_id):
     program = get_object_or_404(Programme, id=programme_id)
     curriculums = program.curriculums.all()
@@ -514,6 +517,7 @@ def admin_view_curriculums_of_a_programme(request, programme_id):
     return JsonResponse(data)
 
 @api_view(['GET'])
+@permission_classes([IsAcadAdminOrDean])
 def Admin_view_all_working_curriculums(request):
     """API view to return all working curriculums offered by the institute as JSON"""
 
@@ -569,6 +573,7 @@ def Admin_view_all_working_curriculums(request):
     # Return the data as JSON response
     return JsonResponse({'curriculums': curriculum_data}, safe=False)
 
+@require_designation("acadadmin", "Dean Academic")
 def admin_view_semesters_of_a_curriculum(request, curriculum_id):
     """API endpoint to get all semesters of a specific curriculum for React frontend."""
         
@@ -640,6 +645,7 @@ def admin_view_semesters_of_a_curriculum(request, curriculum_id):
 
     return JsonResponse(curriculum_data)
 
+@require_designation("acadadmin", "Dean Academic")
 def admin_view_a_semester_of_a_curriculum(request, semester_id):
     # user_details = ExtraInfo.objects.get(user=request.user)
     # des = HoldsDesignation.objects.filter(user=request.user).first()
@@ -690,6 +696,7 @@ def admin_view_a_semester_of_a_curriculum(request, semester_id):
 
     return JsonResponse(semester_data, safe=False)
 
+@require_designation("acadadmin", "Dean Academic")
 def admin_view_a_courseslot(request, courseslot_id):
     """API to view a course slot"""
 
@@ -758,6 +765,7 @@ def admin_view_a_courseslot(request, courseslot_id):
     })
 
 @api_view(['GET'])
+@permission_classes([IsAcadAdminOrDean])
 def admin_view_all_courses(request):
     """Returns all courses with required fields as JSON data."""
 
@@ -791,6 +799,7 @@ def admin_view_all_courses(request):
     return JsonResponse({'courses': courses_data})
 
 @api_view(['GET'])
+@permission_classes([IsAcadAdminOrDean])
 def admin_view_a_course(request, course_id):
     """View to handle the details of a Course as an API"""
 
@@ -835,6 +844,7 @@ def admin_view_a_course(request, course_id):
 #     disciplines = Discipline.objects.all()
 #     return render(request, 'programme_curriculum/acad_admin/admin_view_all_disciplines.html', {'disciplines': disciplines})
 @api_view(['GET'])
+@permission_classes([IsAcadAdminOrDean])
 def admin_view_all_discplines(request):
     """API to view all disciplines with related programmes"""
 
@@ -872,6 +882,7 @@ def admin_view_all_discplines(request):
 
 
 @api_view(['GET'])
+@permission_classes([IsAcadAdminOrDean])
 def admin_view_all_batches(request):
     """ views the details of a Course """
 
@@ -987,7 +998,7 @@ def admin_view_all_batches(request):
 
 @csrf_exempt  
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAcadAdminOrDean])
 def add_discipline_form(request):
     if request.method == 'POST':
         try:
@@ -1007,6 +1018,7 @@ def add_discipline_form(request):
 
 @csrf_exempt
 @permission_classes([IsAuthenticated])
+@require_designation("acadadmin", "Dean Academic")
 def edit_discipline_form(request, discipline_id):
 
     # user_details = ExtraInfo.objects.get(user = request.user)
@@ -1085,6 +1097,7 @@ def edit_discipline_form(request, discipline_id):
 # @permission_classes([IsAuthenticated])
 # @api_view(['POST'])
 @csrf_exempt
+@require_designation("acadadmin", "Dean Academic")
 def add_programme_form(request):
     if request.method == 'POST':
         data = json.loads(request.body)
@@ -1114,6 +1127,7 @@ def add_programme_form(request):
 
 @csrf_exempt
 @permission_classes([IsAuthenticated])
+@require_designation("acadadmin", "Dean Academic")
 def edit_programme_form(request, programme_id):
 
     # user_details = ExtraInfo.objects.get(user = request.user)
@@ -1166,7 +1180,7 @@ def edit_programme_form(request, programme_id):
     }, status=405)
 
 
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAcadAdminOrDean])
 @api_view(['POST'])
 def add_curriculum_form(request):
     """
@@ -1236,7 +1250,7 @@ def add_curriculum_form(request):
     return JsonResponse({'error': 'Invalid request method.'}, status=405)
 
 
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAcadAdminOrDean])
 @api_view(['GET', 'PUT'])
 def edit_curriculum_form(request, curriculum_id):
     """
@@ -1330,6 +1344,7 @@ def edit_curriculum_form(request, curriculum_id):
             return JsonResponse({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     return JsonResponse({'error': 'Invalid request method.'}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
 @csrf_exempt
+@require_designation("acadadmin", "Dean Academic")
 def add_course_form(request):
 
     # user_details = ExtraInfo.objects.get(user = request.user)
@@ -1422,7 +1437,7 @@ def add_course_form(request):
 
 @csrf_exempt
 @api_view(['GET', 'PUT'])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAcadAdminOrDean])
 def update_course_form(request, course_id):
     """
     Handle getting and updating Course through an API endpoint.
@@ -1614,7 +1629,7 @@ def update_course_form(request, course_id):
 
 @csrf_exempt
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAcadAdminOrDean])
 def course_audit_logs(request, course_id):
     """
     Get audit logs for a specific course
@@ -1662,7 +1677,7 @@ def course_audit_logs(request, course_id):
         )
 
 
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAcadAdminOrDean])
 @api_view(['POST'])
 def add_courseslot_form(request):
     try:
@@ -1708,6 +1723,7 @@ def add_courseslot_form(request):
 
 @csrf_exempt  # Use this decorator if you're not using CSRF tokens in your API calls
 @permission_classes([IsAuthenticated])
+@require_designation("acadadmin", "Dean Academic")
 def edit_courseslot_form(request, courseslot_id):
     
     courseslot = get_object_or_404(CourseSlot, Q(id=courseslot_id))
@@ -1749,7 +1765,7 @@ def edit_courseslot_form(request, courseslot_id):
 
 @csrf_exempt
 @api_view(['DELETE'])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAcadAdminOrDean])
 def delete_courseslot(request, courseslot_id):
     try:
         # Check if the user has the required session key
@@ -1786,7 +1802,7 @@ def delete_courseslot(request, courseslot_id):
         return JsonResponse({'error': 'Internal server error'}, status=500)
 
 
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAcadAdminOrDean])
 @api_view(['POST'])
 @csrf_exempt  # Use this decorator if CSRF is not handled elsewhere
 def add_batch_form(request):
@@ -1818,6 +1834,7 @@ def add_batch_form(request):
 
 @csrf_exempt  # Use this decorator if you're not using CSRF tokens in your API calls
 @permission_classes([IsAuthenticated])
+@require_designation("acadadmin", "Dean Academic")
 def edit_batch_form(request, batch_id):
 
     # user_details = ExtraInfo.objects.get(user = request.user)
@@ -1947,6 +1964,7 @@ def edit_batch_form(request, batch_id):
             return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
     return JsonResponse({'error': 'Invalid request method'}, status=405)
 
+@require_designation("acadadmin", "Dean Academic")
 def instigate_semester(request, semester_id):
     """
     This function is used to add the semester information.
@@ -1990,6 +2008,7 @@ def instigate_semester(request, semester_id):
 
 @csrf_exempt  # Use this decorator if you're not using CSRF tokens in your API calls
 @permission_classes([IsAuthenticated])
+@require_designation("acadadmin", "Dean Academic")
 def replicate_curriculum(request, curriculum_id):
     """
     This function is used to replicate the previous curriculum into a new curriculum.
@@ -3268,6 +3287,7 @@ def file_unarchive(request,FileId):
 
 @csrf_exempt
 @permission_classes([IsAuthenticated])
+@require_designation("acadadmin", "Dean Academic")
 def course_slot_type_choices(request):
     """
     API endpoint to return the list of course slot type choices from the CourseSlot model.
@@ -3277,6 +3297,7 @@ def course_slot_type_choices(request):
 
 @csrf_exempt
 @permission_classes([IsAuthenticated])
+@require_designation("acadadmin", "Dean Academic")
 def semester_details(request):
     curriculum_id = request.GET.get('curriculum_id')
 
@@ -3309,7 +3330,7 @@ def semester_details(request):
 
 @api_view(['GET'])
 @csrf_exempt
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAcadAdminOrDean])
 def get_programme(request, programme_id):
     program = get_object_or_404(Programme, id=programme_id)
     # curriculums = program.curriculums.all()
@@ -3332,12 +3353,14 @@ def get_programme(request, programme_id):
 
 @csrf_exempt
 @permission_classes([IsAuthenticated])
+@require_designation("acadadmin", "Dean Academic")
 def get_batch_names(request):
     choices = [{'value': key, 'label': label} for key, label in Batch._meta.get_field('name').choices]
     return JsonResponse({'choices': choices})
 
 @csrf_exempt
 @permission_classes([IsAuthenticated])
+@require_designation("acadadmin", "Dean Academic")
 def get_all_disciplines(request):
     # Fetch all disciplines from the database
     disciplines = Discipline.objects.all()
@@ -3357,6 +3380,7 @@ def get_all_disciplines(request):
     return JsonResponse(disciplines_data, safe=False)
 @csrf_exempt
 @permission_classes([IsAuthenticated])
+@require_designation("acadadmin", "Dean Academic")
 def get_unused_curriculam(request):
     used_curriculum_ids = Batch.objects.exclude(curriculum__isnull=True).values_list('curriculum_id', flat=True)
     unused_curricula = Curriculum.objects.exclude(id__in=used_curriculum_ids)
@@ -3376,6 +3400,7 @@ def get_unused_curriculam(request):
     return JsonResponse(unused_curricula_data, safe=False)
 @csrf_exempt
 @permission_classes([IsAuthenticated])
+@require_designation("acadadmin", "Dean Academic")
 def admin_view_all_course_instructor(request):
     # Fetch all records from the CourseInstructor table
     course_instructors = CourseInstructor.objects.select_related(
@@ -3406,6 +3431,7 @@ def admin_view_all_course_instructor(request):
     return JsonResponse({'course_instructors': course_instructors_data})
 @csrf_exempt
 @permission_classes([IsAuthenticated])
+@require_designation("acadadmin", "Dean Academic")
 def admin_view_all_faculties(request):
     # Fetch all faculties with their user details
     faculties = Faculty.objects.select_related('id__user').annotate(
@@ -3445,6 +3471,7 @@ def parse_academic_year(academic_year, semester_type):
 
 @csrf_exempt
 @permission_classes([IsAuthenticated])
+@require_designation("acadadmin", "Dean Academic")
 def add_course_instructor(request):
     if request.method != "POST":
         return JsonResponse({"error": "Invalid request method"}, status=405)
@@ -3544,6 +3571,7 @@ def add_course_instructor(request):
 
 @csrf_exempt
 @permission_classes([IsAuthenticated])
+@require_designation("acadadmin", "Dean Academic")
 def update_course_instructor_form(request, instructor_id):
     # Retrieve the CourseInstructor object or return 404 if not found
     course_instructor = get_object_or_404(CourseInstructor, id=instructor_id)
@@ -3661,7 +3689,7 @@ def get_superior_data(request):
 @csrf_exempt
 @api_view(['DELETE'])
 @authentication_classes([TokenAuthentication])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAcadAdminOrDean])
 def admin_delete_course_instructor(request, instructor_id):
     """
     Delete a course instructor assignment
@@ -3733,7 +3761,7 @@ def admin_delete_course_instructor(request, instructor_id):
 @csrf_exempt
 @api_view(['DELETE'])
 @authentication_classes([TokenAuthentication])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAcadAdminOrDean])
 def admin_delete_course(request, course_id):
     """
     Delete a course
@@ -3809,7 +3837,7 @@ def admin_delete_course(request, course_id):
 @csrf_exempt
 @api_view(['DELETE'])
 @authentication_classes([TokenAuthentication])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAcadAdminOrDean])
 def admin_delete_programme(request, programme_id):
     """
     Delete a programme
@@ -3878,7 +3906,7 @@ def admin_delete_programme(request, programme_id):
 @csrf_exempt
 @api_view(['DELETE'])
 @authentication_classes([TokenAuthentication])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAcadAdminOrDean])
 def admin_delete_curriculum(request, curriculum_id):
     """
     Delete a curriculum
@@ -3954,7 +3982,7 @@ def admin_delete_curriculum(request, curriculum_id):
 @csrf_exempt
 @api_view(['DELETE'])
 @authentication_classes([TokenAuthentication])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAcadAdminOrDean])
 def admin_delete_discipline(request, discipline_id):
     """
     Delete a discipline
