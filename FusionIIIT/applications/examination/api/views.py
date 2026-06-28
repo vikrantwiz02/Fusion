@@ -3205,6 +3205,7 @@ class ResultAnnouncementListAPI(APIView):
                 "semester_type": sem_type,
                 "semester_label": sem_label,
                 "announced": ann.announced,
+                "per_student_selection": ann.per_student_selection,
                 "created_at": ann.created_at,
             })
         

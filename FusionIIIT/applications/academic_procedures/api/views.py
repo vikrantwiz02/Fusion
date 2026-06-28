@@ -1028,6 +1028,7 @@ def faculty_assigned_courses(request):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+@role_required(['student'])
 def get_next_sem_courses(request):
     try:
         next_sem = request.data.get('next_sem')

@@ -59,7 +59,14 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from .models import hidden_grades, authentication
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from applications.globals.access import user_holds_any_role
+
+GRADE_SUBMIT_ROLES = (
+    "Professor", "Associate Professor", "Assistant Professor",
+    "acadadmin", "Dean Academic",
+)
+GRADE_UPDATE_ROLES = ("Dean Academic",)
 from applications.online_cms.models import Student_grades
 from django.http import JsonResponse
 import csv
@@ -373,9 +380,12 @@ def announcement(request):
 
 
 class Updatehidden_gradesMultipleView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        # Only the Dean (Academic) may update grades after submission lock.
+        if not user_holds_any_role(request.user, GRADE_UPDATE_ROLES):
+            return Response({'error': 'Access denied.'}, status=status.HTTP_403_FORBIDDEN)
         student_ids = request.POST.getlist('student_ids[]')
         semester_ids = request.POST.getlist('semester_ids[]')
         course_ids = request.POST.getlist('course_ids[]')
@@ -414,9 +424,12 @@ class Updatehidden_gradesMultipleView(APIView):
 
 
 class Submithidden_gradesMultipleView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        # Faculty and acad admin may submit grades.
+        if not user_holds_any_role(request.user, GRADE_SUBMIT_ROLES):
+            return Response({'error': 'Access denied.'}, status=status.HTTP_403_FORBIDDEN)
         student_ids = request.POST.getlist('student_ids[]')
         semester_ids = request.POST.getlist('semester_ids[]')
         course_ids = request.POST.getlist('course_ids[]')
@@ -809,9 +822,12 @@ def submitEntergrades(request):
 
 
 class submitEntergradesStoring(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        # Faculty and acad admin may submit/store grades.
+        if not user_holds_any_role(request.user, GRADE_SUBMIT_ROLES):
+            return Response({'error': 'Access denied.'}, status=status.HTTP_403_FORBIDDEN)
         student_ids = request.POST.getlist("student_ids[]")
         batch_ids = request.POST.getlist("batch_ids[]")
         course_ids = request.POST.getlist("course_ids[]")
