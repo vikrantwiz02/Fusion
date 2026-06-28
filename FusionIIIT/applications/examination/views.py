@@ -157,7 +157,6 @@ def timetable(request):
     return render(request, '../templates/examination/timetable.html', {})
 
 
-@login_required(login_url='/accounts/login')
 def browse_announcements():
     """
     This function is used to browse Announcements Department-Wise
@@ -189,7 +188,6 @@ def browse_announcements():
     return context
 
 
-@login_required(login_url='/accounts/login')
 def get_to_request(username):
     """
     This function is used to get requests for the receiver
@@ -696,17 +694,13 @@ def updateEntergrades(request):
     return render(request, "../templates/examination/updateEntergrades.html", context)
 
 class moderate_student_grades(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        des = request.session.get("currentDesignationSelected")
-        if des == "acadadmin" or des=="Dean Academic":
-         pass
-        else:
-         if request.is_ajax():  # For AJAX or JSON requests
-            return JsonResponse({"success": False, "error": "Access denied."}, status=403)
-         else:  # For non-AJAX requests
-            return HttpResponseRedirect('/dashboard/')
+        # Grade moderation/override is restricted to academic admin / Dean,
+        # checked against the real held designation (token-auth compatible).
+        if not user_holds_any_role(request.user, ("acadadmin", "Dean Academic")):
+            return Response({"success": False, "error": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
         student_ids = request.POST.getlist('student_ids[]')
         semester_ids = request.POST.getlist('semester_ids[]')
         course_ids = request.POST.getlist('course_ids[]')
