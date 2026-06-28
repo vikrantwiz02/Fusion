@@ -25,6 +25,7 @@ from rest_framework import status
 
 from applications.academic_information.models import Student as AcademicStudent
 from applications.globals.models import ExtraInfo, Designation, HoldsDesignation
+from applications.globals.access import IsAcadAdminOrDean, require_designation
 from django.contrib.auth.models import User
 from applications.programme_curriculum.models import (
     Programme, Curriculum, Batch, Discipline
@@ -368,6 +369,7 @@ def get_display_branch_name(discipline):
 
 @csrf_exempt
 @require_http_methods(["POST"])
+@require_designation("acadadmin", "Dean Academic")
 def process_excel_upload(request):
     try:
         if 'file' not in request.FILES:
@@ -647,6 +649,7 @@ def check_student_duplicate(student, duplicate_check_fields):
 
 @csrf_exempt
 @require_http_methods(["POST"])
+@require_designation("acadadmin", "Dean Academic")
 def save_students_batch(request):
     try:
         data = json.loads(request.body)
@@ -1027,6 +1030,7 @@ def get_allocation_summary(students, programme_type):
 
 @csrf_exempt
 @require_http_methods(["POST"])
+@require_designation("acadadmin", "Dean Academic")
 def add_single_student(request):
     try:
         data = json.loads(request.body)
@@ -1199,6 +1203,7 @@ def add_single_student(request):
 
 @csrf_exempt
 @require_http_methods(["PUT"])
+@require_designation("acadadmin", "Dean Academic")
 def set_total_seats(request):
     try:
         data = json.loads(request.body)
@@ -2253,6 +2258,7 @@ def list_students(request):
 
 @csrf_exempt
 @require_http_methods(["POST"])
+@require_designation("acadadmin", "Dean Academic")
 def create_batch(request):
     """
     Create new batch
@@ -3876,6 +3882,7 @@ def check_transfer_status(request):
 
 @csrf_exempt
 @require_http_methods(["GET"])
+@require_designation("acadadmin", "Dean Academic")
 def get_batch_students(request, batch_id):
     """
     Get students for a specific batch - ONLY from StudentBatchUpload table
@@ -4104,7 +4111,7 @@ def get_batch_students(request, batch_id):
 # =============================================================================
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAcadAdminOrDean])
 def admin_batches_unified(request):
     """
     UNIFIED API for both 'Batches' tab and 'Upcoming Batches' tab
