@@ -3205,6 +3205,7 @@ class ResultAnnouncementListAPI(APIView):
                 "semester_type": sem_type,
                 "semester_label": sem_label,
                 "announced": ann.announced,
+                "per_student_selection": ann.per_student_selection,
                 "created_at": ann.created_at,
             })
         
@@ -4431,7 +4432,7 @@ class GradeValidationView(APIView):
 
             # Track first appearance of each course to classify remark
             FAILING_GRADES = {"F", "I", "X", "AU", "CD"}
-            NON_CREDIT_GRADES = {"F", "I", "X", "AU", "CD", "S"}
+            NON_CREDIT_GRADES = {"F", "I", "X", "AU", "CD"}
             course_first_grade: dict = {}   # course_id -> first grade string
 
             semesters_data = []
@@ -4624,7 +4625,7 @@ class GradeValidationView(APIView):
                 "M.Des": "Master of Design",
                 "PhD": "Doctor of Philosophy",
             }
-            NON_CREDIT_GRADES2 = {"F", "I", "X", "AU", "CD", "S"}
+            NON_CREDIT_GRADES2 = {"F", "I", "X", "AU", "CD"}
             FAILING_GRADES2 = {"F", "I", "X", "AU", "CD"}
 
             def _get_student_data(stu):
@@ -4899,7 +4900,8 @@ class GradeValidationView(APIView):
                     story.append(st2)
 
                 # ── Credits Details table ────────────────────────────────
-                NON_EARN = {"F", "I", "X", "AU", "CD", "S", "—", ""}
+                # S earns credit (counted in total). X and failing grades do not.
+                NON_EARN = {"F", "I", "X", "AU", "CD", "—", ""}
                 graded_sems = [s for s in semesters if not s.get("is_registered_only")]
 
                 cd_rows = []

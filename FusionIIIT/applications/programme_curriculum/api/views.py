@@ -33,7 +33,7 @@ import re
 from notification.views import prog_and_curr_notif
 # from applications.academic_information.models import Student
 from applications.globals.models import (DepartmentInfo, Designation,ExtraInfo, Faculty, HoldsDesignation)
-from applications.globals.access import IsAcadAdminOrDean, require_designation
+from applications.globals.access import IsAcadAdminOrDean, require_designation, user_holds_role, _user_from_request
 # ------------module-functions---------------#
 
 @login_required(login_url='/accounts/login')
@@ -468,7 +468,7 @@ def view_all_batches(request):
 
 # @api_view(['GET'])
 # @login_required(login_url='/accounts/login')
-@require_designation("acadadmin", "Dean Academic")
+@require_designation("acadadmin", "Dean Academic", "student", "Professor", "Associate Professor", "Assistant Professor")
 def admin_view_all_programmes(request):
     """
     API to return all programmes (UG, PG, PhD) for an admin user.
@@ -495,7 +495,7 @@ def admin_view_all_programmes(request):
     return JsonResponse(response_data, status=200, safe=False)
 
 @api_view(['GET'])
-@permission_classes([IsAcadAdminOrDean])
+@permission_classes([IsAuthenticated])
 def admin_view_curriculums_of_a_programme(request, programme_id):
     program = get_object_or_404(Programme, id=programme_id)
     curriculums = program.curriculums.all()
@@ -517,7 +517,7 @@ def admin_view_curriculums_of_a_programme(request, programme_id):
     return JsonResponse(data)
 
 @api_view(['GET'])
-@permission_classes([IsAcadAdminOrDean])
+@permission_classes([IsAuthenticated])
 def Admin_view_all_working_curriculums(request):
     """API view to return all working curriculums offered by the institute as JSON"""
 
@@ -573,7 +573,7 @@ def Admin_view_all_working_curriculums(request):
     # Return the data as JSON response
     return JsonResponse({'curriculums': curriculum_data}, safe=False)
 
-@require_designation("acadadmin", "Dean Academic")
+@require_designation("acadadmin", "Dean Academic", "student", "Professor", "Associate Professor", "Assistant Professor")
 def admin_view_semesters_of_a_curriculum(request, curriculum_id):
     """API endpoint to get all semesters of a specific curriculum for React frontend."""
         
@@ -645,7 +645,7 @@ def admin_view_semesters_of_a_curriculum(request, curriculum_id):
 
     return JsonResponse(curriculum_data)
 
-@require_designation("acadadmin", "Dean Academic")
+@require_designation("acadadmin", "Dean Academic", "student", "Professor", "Associate Professor", "Assistant Professor")
 def admin_view_a_semester_of_a_curriculum(request, semester_id):
     # user_details = ExtraInfo.objects.get(user=request.user)
     # des = HoldsDesignation.objects.filter(user=request.user).first()
@@ -696,7 +696,7 @@ def admin_view_a_semester_of_a_curriculum(request, semester_id):
 
     return JsonResponse(semester_data, safe=False)
 
-@require_designation("acadadmin", "Dean Academic")
+@require_designation("acadadmin", "Dean Academic", "student", "Professor", "Associate Professor", "Assistant Professor")
 def admin_view_a_courseslot(request, courseslot_id):
     """API to view a course slot"""
 
@@ -765,7 +765,7 @@ def admin_view_a_courseslot(request, courseslot_id):
     })
 
 @api_view(['GET'])
-@permission_classes([IsAcadAdminOrDean])
+@permission_classes([IsAuthenticated])
 def admin_view_all_courses(request):
     """Returns all courses with required fields as JSON data."""
 
@@ -799,7 +799,7 @@ def admin_view_all_courses(request):
     return JsonResponse({'courses': courses_data})
 
 @api_view(['GET'])
-@permission_classes([IsAcadAdminOrDean])
+@permission_classes([IsAuthenticated])
 def admin_view_a_course(request, course_id):
     """View to handle the details of a Course as an API"""
 
@@ -844,7 +844,7 @@ def admin_view_a_course(request, course_id):
 #     disciplines = Discipline.objects.all()
 #     return render(request, 'programme_curriculum/acad_admin/admin_view_all_disciplines.html', {'disciplines': disciplines})
 @api_view(['GET'])
-@permission_classes([IsAcadAdminOrDean])
+@permission_classes([IsAuthenticated])
 def admin_view_all_discplines(request):
     """API to view all disciplines with related programmes"""
 
@@ -2492,6 +2492,7 @@ def outward_files(request):
             'message': str(e)
         }, status=500)
     
+@require_designation("Professor", "Associate Professor", "Assistant Professor")
 @csrf_exempt
 def update_course_proposal_file(request, course_id):
     # Fetch user designation (will break if request.user is Anonymous)
@@ -2704,8 +2705,13 @@ def update_course_proposal_file(request, course_id):
 #     return render(request,'programme_curriculum/faculty/forward.html',{'form':form,'receive_date':file.receive_date,'proposal':file2,'submitbutton': submitbutton,'id':Proposal_D})
 
 @csrf_exempt
-@permission_classes([IsAuthenticated])
 def forward_course_forms(request, ProposalId):
+    # This is a plain Django view, so DRF auth/permissions do not apply. Resolve
+    # the user from the token ourselves and refuse to trust the client-supplied
+    # username/designation: a caller may only act as a designation they hold.
+    auth_user = _user_from_request(request)
+    if auth_user is None:
+        return JsonResponse({'status': 'error', 'message': 'Authentication required.'}, status=401)
     try:
         # Parse JSON data from request body
         data = json.loads(request.body)
@@ -2716,7 +2722,15 @@ def forward_course_forms(request, ProposalId):
                 'status': 'error',
                 'message': 'Username and designation are required'
             }, status=400)
-        
+
+        # Authorize against the user's REAL held designation, not the client-sent
+        # param, so a non-privileged user cannot forward as Dean/HOD.
+        if not user_holds_role(auth_user, designation):
+            return JsonResponse({
+                'status': 'error',
+                'message': 'You do not hold the designation you are forwarding as.'
+            }, status=403)
+
         # Get the tracking record
         file = get_object_or_404(Proposal_Tracking, id=ProposalId)
         file_id = int(file.file_id)
@@ -4053,6 +4067,7 @@ def admin_delete_discipline(request, discipline_id):
         }, status=500)
 
 
+@require_designation("acadadmin", "Dean Academic")
 @csrf_exempt
 @require_http_methods(["DELETE", "POST"])
 def delete_batch(request, batch_id):
@@ -4144,6 +4159,7 @@ def delete_batch(request, batch_id):
         }, status=500)
 
 
+@require_designation("acadadmin", "Dean Academic")
 @csrf_exempt
 @require_http_methods(["DELETE", "POST"])
 def delete_batch_invalid(request, batch_id):

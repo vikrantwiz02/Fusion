@@ -59,7 +59,14 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from .models import hidden_grades, authentication
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from applications.globals.access import user_holds_any_role
+
+GRADE_SUBMIT_ROLES = (
+    "Professor", "Associate Professor", "Assistant Professor",
+    "acadadmin", "Dean Academic",
+)
+GRADE_UPDATE_ROLES = ("Dean Academic",)
 from applications.online_cms.models import Student_grades
 from django.http import JsonResponse
 import csv
@@ -150,7 +157,6 @@ def timetable(request):
     return render(request, '../templates/examination/timetable.html', {})
 
 
-@login_required(login_url='/accounts/login')
 def browse_announcements():
     """
     This function is used to browse Announcements Department-Wise
@@ -182,7 +188,6 @@ def browse_announcements():
     return context
 
 
-@login_required(login_url='/accounts/login')
 def get_to_request(username):
     """
     This function is used to get requests for the receiver
@@ -373,9 +378,12 @@ def announcement(request):
 
 
 class Updatehidden_gradesMultipleView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        # Only the Dean (Academic) may update grades after submission lock.
+        if not user_holds_any_role(request.user, GRADE_UPDATE_ROLES):
+            return Response({'error': 'Access denied.'}, status=status.HTTP_403_FORBIDDEN)
         student_ids = request.POST.getlist('student_ids[]')
         semester_ids = request.POST.getlist('semester_ids[]')
         course_ids = request.POST.getlist('course_ids[]')
@@ -414,9 +422,12 @@ class Updatehidden_gradesMultipleView(APIView):
 
 
 class Submithidden_gradesMultipleView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        # Faculty and acad admin may submit grades.
+        if not user_holds_any_role(request.user, GRADE_SUBMIT_ROLES):
+            return Response({'error': 'Access denied.'}, status=status.HTTP_403_FORBIDDEN)
         student_ids = request.POST.getlist('student_ids[]')
         semester_ids = request.POST.getlist('semester_ids[]')
         course_ids = request.POST.getlist('course_ids[]')
@@ -683,17 +694,13 @@ def updateEntergrades(request):
     return render(request, "../templates/examination/updateEntergrades.html", context)
 
 class moderate_student_grades(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        des = request.session.get("currentDesignationSelected")
-        if des == "acadadmin" or des=="Dean Academic":
-         pass
-        else:
-         if request.is_ajax():  # For AJAX or JSON requests
-            return JsonResponse({"success": False, "error": "Access denied."}, status=403)
-         else:  # For non-AJAX requests
-            return HttpResponseRedirect('/dashboard/')
+        # Grade moderation/override is restricted to academic admin / Dean,
+        # checked against the real held designation (token-auth compatible).
+        if not user_holds_any_role(request.user, ("acadadmin", "Dean Academic")):
+            return Response({"success": False, "error": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
         student_ids = request.POST.getlist('student_ids[]')
         semester_ids = request.POST.getlist('semester_ids[]')
         course_ids = request.POST.getlist('course_ids[]')
@@ -809,9 +816,12 @@ def submitEntergrades(request):
 
 
 class submitEntergradesStoring(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        # Faculty and acad admin may submit/store grades.
+        if not user_holds_any_role(request.user, GRADE_SUBMIT_ROLES):
+            return Response({'error': 'Access denied.'}, status=status.HTTP_403_FORBIDDEN)
         student_ids = request.POST.getlist("student_ids[]")
         batch_ids = request.POST.getlist("batch_ids[]")
         course_ids = request.POST.getlist("course_ids[]")
