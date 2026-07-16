@@ -5639,6 +5639,9 @@ def apply_batch_changes(request):
         return Response({"errors": errors}, status=status.HTTP_207_MULTI_STATUS)
     return Response({"detail": "Batch changes applied."}, status=status.HTTP_200_OK)
 
+ARCHIVED_USER_STATUSES = ["ARCHIVED", "ALUMNI", "LEFT"]
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 @role_required(['acadadmin'])
@@ -5646,7 +5649,11 @@ def list_students_in_batch_semester_promotion(request):
     batch_id = request.query_params.get("batch_id")
     if not batch_id:
         return Response({"detail": "batch_id required."}, status=status.HTTP_400_BAD_REQUEST)
-    students = Student.objects.filter(batch_id__id=batch_id).order_by('id_id')
+    students = (
+        Student.objects.filter(batch_id__id=batch_id, id__user__is_active=True)
+        .exclude(id__user_status__in=ARCHIVED_USER_STATUSES)
+        .order_by('id_id')
+    )
     result = []
     for st in students:
         result.append({
@@ -5669,6 +5676,10 @@ def apply_promotion(request):
                 student = Student.objects.get(id=sid)
             except Student.DoesNotExist:
                 errors.append({"index": idx, "detail": f"Student {sid} not found."})
+                continue
+            extra = student.id
+            if (not extra.user.is_active) or (extra.user_status in ARCHIVED_USER_STATUSES):
+                errors.append({"index": idx, "detail": f"Student {student.id_id} is archived; skipped."})
                 continue
             old_sem = student.curr_semester_no
             new_sem = old_sem + 1
