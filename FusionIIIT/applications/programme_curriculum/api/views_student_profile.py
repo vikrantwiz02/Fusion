@@ -11,6 +11,9 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
+
 from applications.globals.access import _user_from_request
 from applications.programme_curriculum.models_student_management import (
     StudentBatchUpload,
@@ -20,6 +23,28 @@ from .views_student_management import (
     _decode_base64_blob, _student_image_url, _safe_decimal_conversion,
 )
 from .account_sync import sync_account_from_admission
+
+
+# What a student may change on their own record. The rest comes from the
+# admission file and only the academic section can correct it.
+ALWAYS_EDITABLE = (
+    "phone_number", "apaar_id", "father_occupation", "mother_occupation",
+    "parent_email", "income_group", "income", "state", "resume_link",
+)
+
+# Left blank at admission, so the student may fill it in once and no more.
+FILL_ONCE = (
+    "aadhar_number", "hindi_name", "minority", "blood_group",
+    "blood_group_remarks", "nationality", "country", "address",
+    "father_mobile", "mother_mobile",
+)
+
+IMAGE_MAX_KB = {"photo": 200, "signature": 30}
+
+
+def _editable_fields(rec):
+    filled = [f for f in FILL_ONCE if str(getattr(rec, f, "") or "").strip()]
+    return list(ALWAYS_EDITABLE) + [f for f in FILL_ONCE if f not in filled]
 
 
 def _get_student_record(user):
@@ -72,6 +97,8 @@ def _serialize(rec):
         "income": str(rec.income) if rec.income is not None else "",
         "state": rec.state or "",
         "address": rec.address or "",
+        "resume_link": rec.resume_link or "",
+        "editable": _editable_fields(rec),
     }
 
 
@@ -85,6 +112,135 @@ def student_profile_completion(request):
     if rec is None:
         return JsonResponse({"success": False, "message": "No student record found"}, status=404)
     return JsonResponse({"success": True, "data": _serialize(rec)})
+
+
+@csrf_exempt
+@require_http_methods(["POST", "PUT"])
+def student_profile_image(request):
+    """Replace the photo or the signature on its own, keeping the bytes as sent."""
+    user = _user_from_request(request)
+    if user is None:
+        return JsonResponse({"success": False, "message": "Authentication required"}, status=401)
+    rec = _get_student_record(user)
+    if rec is None:
+        return JsonResponse({"success": False, "message": "No student record found"}, status=404)
+
+    try:
+        data = json.loads(request.body)
+    except Exception:
+        return JsonResponse({"success": False, "message": "Invalid request data"}, status=400)
+
+    kind = (data.get("kind") or "photo").strip().lower()
+    if kind not in IMAGE_MAX_KB:
+        return JsonResponse({"success": False, "message": "Unknown image"}, status=400)
+
+    max_kb = IMAGE_MAX_KB[kind]
+    image = data.get("image") or data.get(kind) or ""
+    if ";base64," not in image:
+        return JsonResponse(
+            {"success": False, "message": "Please choose a PNG or JPEG image"}, status=400)
+
+    blob, mime = _decode_base64_blob(image, max_kb=max_kb)
+    if blob is None:
+        return JsonResponse(
+            {"success": False,
+             "message": "{} must be a PNG or JPEG of up to {} KB".format(
+                 kind.capitalize(), max_kb)},
+            status=400)
+
+    setattr(rec, kind + "_blob", blob)
+    setattr(rec, kind + "_mime", mime)
+    rec.save(update_fields=[kind + "_blob", kind + "_mime"])
+    return JsonResponse({"success": True, kind: _student_image_url(rec, kind)})
+
+
+@csrf_exempt
+@require_http_methods(["POST", "PUT"])
+def student_profile_update(request):
+    """Save the fields a student is allowed to change on their own record."""
+    user = _user_from_request(request)
+    if user is None:
+        return JsonResponse({"success": False, "message": "Authentication required"}, status=401)
+    rec = _get_student_record(user)
+    if rec is None:
+        return JsonResponse({"success": False, "message": "No student record found"}, status=404)
+
+    try:
+        data = json.loads(request.body)
+    except Exception:
+        return JsonResponse({"success": False, "message": "Invalid request data"}, status=400)
+
+    allowed = set(_editable_fields(rec))
+    submitted = {k: v for k, v in data.items() if k in ALWAYS_EDITABLE or k in FILL_ONCE}
+    refused = sorted(set(submitted) - allowed)
+    if refused:
+        return JsonResponse(
+            {"success": False,
+             "errors": {f: "This field can no longer be changed here" for f in refused},
+             "message": "Some fields are already filled in and cannot be edited"},
+            status=400)
+
+    def text(field):
+        value = submitted.get(field)
+        return value.strip() if isinstance(value, str) else ("" if value is None else str(value))
+
+    errors = {}
+    for field, label in (("aadhar_number", "Aadhaar number"), ("apaar_id", "APAAR ID")):
+        if field in submitted and text(field) and not re.fullmatch(r"\d{12}", text(field)):
+            errors[field] = "{} must be exactly 12 digits".format(label)
+
+    if "hindi_name" in submitted and text("hindi_name"):
+        value = text("hindi_name")
+        if not (re.search(r"[\u0900-\u097F]", value)
+                and re.fullmatch(r"[\u0900-\u097F\u200c\u200d\s.'-]+", value)):
+            errors["hindi_name"] = "Name (Hindi) must be written in Devanagari, not English"
+
+    phone = text("phone_number") if "phone_number" in submitted else (rec.phone_number or "")
+    father_mobile = (text("father_mobile") if "father_mobile" in submitted
+                     else (rec.father_mobile or ""))
+    mother_mobile = (text("mother_mobile") if "mother_mobile" in submitted
+                     else (rec.mother_mobile or ""))
+    if phone and phone in (father_mobile, mother_mobile):
+        errors["phone_number"] = "Your mobile number must not match a parent's mobile number"
+    for field in ("phone_number", "father_mobile", "mother_mobile"):
+        if field in submitted and text(field) and not re.fullmatch(r"\d{10}", text(field)):
+            errors[field] = "Enter a 10-digit mobile number"
+
+    if "resume_link" in submitted and text("resume_link"):
+        link = text("resume_link")
+        if not re.match(r"https://(drive|docs)\.google\.com/", link):
+            errors["resume_link"] = (
+                "Paste a Google Drive or Google Docs link starting with https://")
+
+    if "parent_email" in submitted and text("parent_email"):
+        try:
+            validate_email(text("parent_email"))
+        except ValidationError:
+            errors["parent_email"] = "Enter a valid email address"
+
+    income_value = None
+    if "income" in submitted:
+        income_value = _safe_decimal_conversion(text("income") or None)
+        if text("income") and income_value is None:
+            errors["income"] = "Income must be a valid number"
+
+    blood_group = text("blood_group") if "blood_group" in submitted else (rec.blood_group or "")
+    blood_remarks = (text("blood_group_remarks") if "blood_group_remarks" in submitted
+                     else (rec.blood_group_remarks or ""))
+    if blood_group == "Other" and not blood_remarks:
+        errors["blood_group_remarks"] = "Please specify the blood group"
+
+    if errors:
+        return JsonResponse(
+            {"success": False, "errors": errors, "message": "Please fix the highlighted fields"},
+            status=400)
+
+    for field in submitted:
+        setattr(rec, field, income_value if field == "income" else text(field))
+    rec.save()
+    sync_account_from_admission(rec)
+    return JsonResponse({"success": True, "data": _serialize(rec),
+                         "message": "Profile updated"})
 
 
 @csrf_exempt
