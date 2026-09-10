@@ -3279,6 +3279,56 @@ def submit_preregistration(request):
 @api_view(['GET'])
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
+def swayam_availability(request):
+    """How many Swayam slots the student has left, and which path can still use them."""
+    try:
+        student = Student.objects.get(id=request.user.extrainfo)
+        semester = Semester.objects.filter(
+            curriculum=student.batch_id.curriculum,
+            semester_no=student.curr_semester_no,
+        ).first()
+        if not semester:
+            return JsonResponse({"error": "Not Eligible for Swayam Registration"}, status=400)
+
+        all_slots = CourseSlot.objects.filter(semester=semester, name__startswith="SW")
+        # Slots are per semester, so only this semester's requests can consume them.
+        requests = SwayamReplacementRequest.objects.filter(
+            student=student, semester=semester,
+            request_type__in=['Extra_Credits', 'Swayam_Replace'])
+        used_by = {'Extra_Credits': set(), 'Swayam_Replace': set()}
+        for req in requests:
+            if req.new_course_slot_id:
+                used_by[req.request_type].add(req.new_course_slot_id)
+
+        registered = set(course_registration.objects.filter(
+            student_id=student, semester_id=semester
+        ).exclude(course_slot_id__isnull=True).values_list('course_slot_id', flat=True))
+
+        total = all_slots.count()
+        taken = used_by['Extra_Credits'] | used_by['Swayam_Replace'] | registered
+        free = all_slots.exclude(id__in=taken).count()
+
+        return JsonResponse({
+            "total_slots": total,
+            "free_slots": free,
+            "used_extra_credits": len(used_by['Extra_Credits']),
+            "used_replace": len(used_by['Swayam_Replace']),
+            # False when the semester has no Swayam slots at all, which is not
+            # the same as having spent them; the panels explain that case.
+            "applicable": total > 0,
+            # A replacement has to name two new Swayam courses, so it needs two.
+            "can_extra_credit": free >= 1,
+            "can_replace": free >= 2,
+        })
+    except Student.DoesNotExist:
+        return JsonResponse({"error": "Student not found"}, status=404)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+@api_view(['GET'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
 @role_required(['student'])
 @block_pg_phd
 def get_swayam_registration_data(request):
@@ -3396,7 +3446,8 @@ def submit_swayam_registration(request):
     registrations = payload.get("registrations", [])
     errors = []
     success_count = 0
-    
+    chosen_course_ids = set()
+
     for reg in registrations:
         slot_id = reg.get("slot_id")
         course_id = reg.get("course_id")
@@ -3430,6 +3481,18 @@ def submit_swayam_registration(request):
         if existing_request:
             errors.append(f"Already have a pending/approved request for slot {course_slot.name}")
             continue
+
+        # One course cannot fill two slots, in this submission or an earlier one.
+        if course.id in chosen_course_ids:
+            errors.append(f"{course.code} is selected in more than one slot")
+            continue
+
+        if SwayamReplacementRequest.objects.filter(
+                student=student,
+                new_course=course,
+                status__in=['Pending', 'Approved']).exists():
+            errors.append(f"Already have a pending/approved request for {course.code}")
+            continue
         
         try:
             SwayamReplacementRequest.objects.create(
@@ -3445,6 +3508,7 @@ def submit_swayam_registration(request):
                 status='Pending'
             )
             success_count += 1
+            chosen_course_ids.add(course.id)
         except Exception as e:
             errors.append(f"Failed to register for {course.code}: {str(e)}")
     
