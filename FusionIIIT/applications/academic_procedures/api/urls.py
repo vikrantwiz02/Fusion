@@ -32,6 +32,7 @@ urlpatterns = [
     url(r'^stu/preregistration/$', views.get_preregistration_data, name='get_preregistration_data'),
     url(r'^stu/preregistration/submit/$', views.submit_preregistration, name='preregistration-submit'),
     url(r'^stu/swayam_courses/$', views.get_swayam_registration_data, name='get_swayam_data'),
+    url(r'^stu/swayam/availability/$', views.swayam_availability, name='swayam-availability'),
     url(r'^stu/swayam/submit/$', views.submit_swayam_registration, name='swayam-submit'),
     url(r'^stu/swayam/replace/check/$', views.swayam_replace_check, name='swayam-replace-check'),
     url(r'^stu/swayam/replace/slots/$', views.swayam_replace_slots, name='swayam-replace-slots'),
