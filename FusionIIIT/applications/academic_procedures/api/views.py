@@ -1285,6 +1285,9 @@ def verify_course(request):
         "firstname": user_obj.first_name or "",
         "lastname": user_obj.last_name or "",
         "programme_category": _student_programme_category(student),
+        "batch": str(student.batch_id.year) if student.batch_id else "",
+        "branch": (student.batch_id.discipline.acronym
+                   if student.batch_id and student.batch_id.discipline else ""),
     }
 
     # current curriculum & semester - handle None batch_id case
@@ -1380,12 +1383,25 @@ def verify_course(request):
     else:
         current_semester_type = "Even Semester"
 
+    # CPI as of the semester before each one on offer, so a receipt printed for
+    # any semester carries the right figure. Same helper as the transcript.
+    from applications.examination.api.views import previous_term_cpi
+    prev_sem_cpi = {}
+    for sem in {d["sem"] for d in details}:
+        try:
+            value = previous_term_cpi(student, sem)
+        except Exception:
+            continue
+        if value is not None:
+            prev_sem_cpi[str(sem)] = value
+
     return Response({
         "details": details,
         "dict2": dict2,
         "course_list": course_list,
         "semester_list": semester_list,
         "courseslot_list": courseslot_list,
+        "prev_sem_cpi": prev_sem_cpi,
         "date": {"year": yearr, "semflag": semflag},
         "current_semester": {
             "semester_no": student.curr_semester_no,

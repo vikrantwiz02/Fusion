@@ -358,6 +358,41 @@ def superseded_course_codes(student, graded_codes):
     return superseded
 
 
+def result_declared_for(student, semester, semester_type):
+    """Whether this student's result for the term has been declared."""
+    ann = ResultAnnouncement.objects.filter(
+        batch=student.batch_id, semester=semester, semester_type=semester_type,
+    ).first()
+    return bool(ann and ann.announced
+                and _is_result_published_for(ann, student.id_id))
+
+
+def previous_term_cpi(student, before_semester):
+    """CPI as of the last term before `before_semester` whose result is declared.
+
+    The term may be a summer one, and calculate_cpi_for_student only counts a
+    summer term when told the term is a summer term -- so the type has to come
+    from the grades rather than from the semester's parity. Terms whose result
+    is not out yet are skipped, so the figure never runs ahead of what the
+    student has been shown.
+    """
+    term_order = {'Odd Semester': 0, 'Even Semester': 1, 'Summer Semester': 2}
+    terms = sorted(
+        {(g['semester'], g['semester_type']) for g in
+         Student_grades.objects
+         .filter(roll_no=student.id_id, semester__lte=(before_semester or 0) - 1)
+         .values('semester', 'semester_type')},
+        key=lambda t: (t[0] or 0, term_order.get(t[1], 0)),
+        reverse=True,
+    )
+    for semester, semester_type in terms:
+        if not result_declared_for(student, semester, semester_type):
+            continue
+        cpi, _, _ = calculate_cpi_for_student(student, semester, semester_type)
+        return f'{cpi:.1f}' if cpi is not None else None
+    return None
+
+
 def calculate_cpi_for_student(student, selected_semester, semester_type, require_announced=False):
     total_unit = Decimal('0')
     if selected_semester % 2 == 0 and semester_type == 'Summer Semester':
@@ -3760,8 +3795,16 @@ class StudentCreditSummaryView(APIView):
             and (sem.get("semester_no"), sem.get("semester_type")) in published
         ]
 
+        # The degree-requirement figure below the table is a UG rule, so the
+        # client needs to know which programme this student is on.
+        try:
+            programme_category = student.batch_id.curriculum.programme.category
+        except AttributeError:
+            programme_category = None
+
         return Response(
-            {"success": True, "semesters": announced},
+            {"success": True, "semesters": announced,
+             "programme_category": programme_category},
             status=status.HTTP_200_OK,
         )
 
@@ -4759,7 +4802,6 @@ def _build_grade_validation_semesters(student):
     course_first_grade = {}
 
     semesters_data = []
-    summer_counter = 0
     cumulative_credits = Decimal('0')  # deduped total (tu), count-once
 
     for key in sorted_keys:
@@ -4767,8 +4809,9 @@ def _build_grade_validation_semesters(student):
         is_summer = _is_summer_key(key)
 
         if is_summer:
-            summer_counter += 1
-            label = f"Summer Semester {summer_counter}"
+            # Named by the semester it follows, as the marksheet names it, not
+            # by how many summer terms the student happens to have taken.
+            label = f"Summer Semester {format_semester_display(s_no, 'Summer Semester').split()[-1]}"
         else:
             label = f"Semester {s_no}"
 
