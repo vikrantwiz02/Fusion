@@ -2221,6 +2221,56 @@ class UploadGradesProfAPI(APIView):
             )
 
 
+def offering_roll_numbers(offerings, course_id, academic_year, semester_type):
+    """Roll numbers belonging to the given offerings, by the rule grade submission uses."""
+    regs = course_registration.objects.filter(
+        course_id_id=course_id,
+        session=academic_year,
+        semester_type=semester_type,
+    )
+    offering_ids = {o.id for o in offerings}
+    sections = {o.section_label for o in offerings}
+    # A no-section offering owns every registrant; a named section scopes to the
+    # bound offering, falling back to the student's home section for older rows.
+    if sections and None not in sections:
+        regs = regs.filter(
+            Q(course_instructor_id__in=offering_ids)
+            | (Q(course_instructor__isnull=True) & Q(student_id__section__in=sections))
+        )
+    return set(regs.values_list("student_id", flat=True))
+
+
+def resolve_requested_offering(request, course_id, academic_year, semester_type):
+    """The offering a grade sheet was asked for, or (None, None) when unscoped.
+
+    Returns (offerings, error_response).
+    """
+    requested = request.data.get("course_instructor") or request.data.get("course_instructor_id")
+    is_acadadmin = user_holds_role(request.user, "acadadmin")
+    all_offerings = list(CourseInstructor.objects.filter(
+        course_id_id=course_id,
+        year=course_instructor_year(academic_year, semester_type),
+        semester_type=semester_type,
+    ))
+    if requested:
+        chosen = [o for o in all_offerings if str(o.id) == str(requested)]
+        if not chosen:
+            return None, Response({"success": False, "error": "That offering does not exist for this course and term."},
+                                  status=status.HTTP_404_NOT_FOUND)
+        if not is_acadadmin and str(chosen[0].instructor_id_id) != str(request.user.username):
+            return None, Response({"error": "Access denied: that section is taught by another faculty member."},
+                                  status=status.HTTP_403_FORBIDDEN)
+        return chosen, None
+    if is_acadadmin:
+        return None, None
+    mine = [o for o in all_offerings
+            if str(o.instructor_id_id) == str(request.user.username)]
+    if not mine:
+        return None, Response({"error": "Access denied: you are not assigned to teach this course this term."},
+                              status=status.HTTP_403_FORBIDDEN)
+    return mine, None
+
+
 class DownloadGradesAPI(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -2269,10 +2319,42 @@ class DownloadGradesAPI(APIView):
 
                 grades_qs = grades_qs.filter(roll_no__in=student_ids_with_programme)
 
-            course_ids = grades_qs.values_list("course_id_id", flat=True).distinct()
-            courses_details = Courses.objects.filter(id__in=course_ids)
+            course_ids = set(grades_qs.values_list("course_id_id", flat=True).distinct())
+            courses_details = {c.id: c for c in Courses.objects.filter(id__in=course_ids)}
 
-            return Response({"courses": list(courses_details.values())}, status=status.HTTP_200_OK)
+            # One entry per offering, so teaching two sections of a course gives
+            # two downloads rather than one sheet holding both.
+            entries = []
+            for off in CourseInstructor.objects.filter(
+                    instructor_id_id=instructor_id,
+                    year=course_instructor_year(academic_year, semester_type),
+                    semester_type=semester_type,
+                    course_id_id__in=course_ids).order_by("course_id__code", "section_label"):
+                course = courses_details.get(off.course_id_id)
+                if not course:
+                    continue
+                entries.append({
+                    "id": course.id,
+                    "code": course.code,
+                    "name": course.name,
+                    "credit": course.credit,
+                    "version": course.version,
+                    "latest_version": course.latest_version,
+                    "course_instructor_id": off.id,
+                    "section_label": off.section_label,
+                })
+            covered = {e["id"] for e in entries}
+            for course_id_left in course_ids - covered:
+                course = courses_details.get(course_id_left)
+                if course:
+                    entries.append({
+                        "id": course.id, "code": course.code, "name": course.name,
+                        "credit": course.credit, "version": course.version,
+                        "latest_version": course.latest_version,
+                        "course_instructor_id": None, "section_label": None,
+                    })
+
+            return Response({"courses": entries}, status=status.HTTP_200_OK)
 
         except Exception as e:
             # Optionally log the exception here
@@ -2311,6 +2393,19 @@ class GeneratePDFAPI(APIView):
                 semester_type=semester_type
             )
 
+            # Scope to one offering so a course taught by several faculty gives
+            # each of them their own students rather than everybody's.
+            scoped_offerings, offering_error = resolve_requested_offering(
+                request, course_id, academic_year, semester_type)
+            if offering_error:
+                return offering_error
+            if scoped_offerings:
+                rolls = offering_roll_numbers(
+                    scoped_offerings, course_id, academic_year, semester_type)
+                grades = grades.filter(
+                    Q(course_instructor_id__in=[o.id for o in scoped_offerings])
+                    | Q(roll_no__in=rolls))
+
             if programme_type:
                 programme_list, prog_err = resolve_programme_list(programme_type)
                 if prog_err:
@@ -2324,30 +2419,29 @@ class GeneratePDFAPI(APIView):
             
             grades = grades.order_by("roll_no")
 
-            if user_holds_role(request.user, "acadadmin"):
-                ci = CourseInstructor.objects.filter(
-                    course_id_id=course_id,
-                    year=course_instructor_year(academic_year, semester_type),
-                    semester_type=semester_type,
-                )
+            if scoped_offerings:
+                ci_list = list(scoped_offerings)
             else:
-                ci = CourseInstructor.objects.filter(
+                ci_list = list(CourseInstructor.objects.filter(
                     course_id_id=course_id,
                     year=course_instructor_year(academic_year, semester_type),
                     semester_type=semester_type,
-                    instructor_id_id=request.user.username
-                )
-            if not ci.exists():
+                ))
+            if not ci_list:
                 return Response({"success": False, "error": "Course not found."}, status=404)
 
-            # semester   = ci.first().semester_no
-            if user_holds_role(request.user, "acadadmin"):
-                _User = get_user_model()
-                ci_obj = ci.first()
-                instr_user = _User.objects.filter(username=ci_obj.instructor_id_id).first()
-                instructor = f"{instr_user.first_name} {instr_user.last_name}" if instr_user else str(ci_obj.instructor_id_id)
-            else:
-                instructor = f"{request.user.first_name} {request.user.last_name}"
+            # Name whoever the sheet actually covers; an unscoped sheet spans them all.
+            _User = get_user_model()
+            names = []
+            for off in ci_list:
+                user = _User.objects.filter(username=off.instructor_id_id).first()
+                label = (f"{user.first_name} {user.last_name}".strip()
+                         if user else str(off.instructor_id_id))
+                if off.section_label and len(ci_list) > 1:
+                    label = f"{label} ({off.section_label})"
+                if label not in names:
+                    names.append(label)
+            instructor = ", ".join(names)
 
             # count grades
             all_grades   = ["O","A+","A","B+","B","C+","C","D+","D","F","S","X","CD"]
@@ -3835,6 +3929,7 @@ class GradeStatusAPI(APIView):
                             "course_code": course.code,
                             "course_name": course.name,
                             "course_id": course.id,
+                            "course_instructor_id": off.id,
                             "section_label": off.section_label or "—",
                             "professor_name": professor_name,
                             "submitted": "Submitted" if is_sub else "Not Submitted",
