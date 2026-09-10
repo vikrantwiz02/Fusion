@@ -1480,10 +1480,18 @@ def database_report_filters(request):
         reverse=True)
     semester_types = sorted(
         {v for v in regs.values_list('semester_type', flat=True).distinct() if v})
+    semesters = sorted(
+        {v for v in regs.values_list('semester_id__semester_no', flat=True).distinct()
+         if v})
+    scopes = scopes_for(request.user)
+    categories = ['UG', 'PG', 'PHD'] if scopes is None else [
+        c for c in ('UG', 'PG', 'PHD') if c in scopes]
     return Response({
         'sessions': sessions,
         'semester_types': semester_types,
         'batches': batches,
+        'semesters': semesters,
+        'programme_categories': categories,
     })
 
 
@@ -1583,6 +1591,243 @@ def database_backlog_registrations(request):
         'count': len(rows),
         'students': len({r['roll_no'] for r in rows}),
         'rows': rows,
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
+@role_required(DATABASE_REPORT_ROLES)
+def database_student_credit_totals(request):
+    """Credits each student registered in a session and semester type, batch-wise."""
+    from django.db.models import Sum
+    from applications.globals.programme_scope import scopes_for, scope_via_student
+
+    session = (request.query_params.get('session') or '').strip()
+    semester_type = (request.query_params.get('semester_type') or '').strip()
+    batch = (request.query_params.get('batch') or '').strip()
+    missing = [name for name, value in (
+        ('session', session), ('semester_type', semester_type), ('batch', batch)
+    ) if not value]
+    if missing:
+        return Response({'detail': f"Required: {', '.join(missing)}."}, status=400)
+    try:
+        batch_year = int(batch)
+    except ValueError:
+        return Response({'detail': f"Batch '{batch}' is not a year."}, status=400)
+
+    totals = scope_via_student(
+        course_registration.objects.filter(
+            session=session, semester_type=semester_type,
+            student_id__batch_id__year=batch_year),
+        scopes_for(request.user), 'student_id',
+    ).values(
+        'student_id__id_id',
+        'student_id__id__user__first_name',
+        'student_id__id__user__last_name',
+    ).annotate(
+        total_credits=Sum('course_id__credit')
+    ).order_by('student_id__id_id')
+
+    rows = [{
+        'roll_no': row['student_id__id_id'],
+        'student_name': '{} {}'.format(
+            row['student_id__id__user__first_name'],
+            row['student_id__id__user__last_name']).strip(),
+        'total_credits': row['total_credits'] or 0,
+    } for row in totals]
+
+    return Response({
+        'count': len(rows),
+        'students': len(rows),
+        'credits': sum(r['total_credits'] for r in rows),
+        'rows': rows,
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
+@role_required(DATABASE_REPORT_ROLES)
+def database_course_registration_counts(request):
+    """How many students registered in each course for a session and semester type."""
+    from django.db.models import Count
+    from applications.globals.programme_scope import (
+        STUDENT_CATEGORY_PATH, scopes_for, scope_via_student)
+
+    session = (request.query_params.get('session') or '').strip()
+    semester_type = (request.query_params.get('semester_type') or '').strip()
+    missing = [name for name, value in (
+        ('session', session), ('semester_type', semester_type)
+    ) if not value]
+    if missing:
+        return Response({'detail': f"Required: {', '.join(missing)}."}, status=400)
+
+    programme = (request.query_params.get('programme') or '').strip().upper()
+    if programme in ('', 'ALL'):
+        programme = None
+    elif programme not in ('UG', 'PG', 'PHD'):
+        return Response({'detail': f"Unknown programme '{programme}'."}, status=400)
+
+    regs = scope_via_student(
+        course_registration.objects.filter(
+            session=session, semester_type=semester_type),
+        scopes_for(request.user), 'student_id')
+    if programme:
+        # iexact because one legacy programme spells the category 'PhD'
+        regs = regs.filter(**{
+            'student_id__%s__iexact' % STUDENT_CATEGORY_PATH: programme})
+
+    counts = regs.values(
+        'course_id_id', 'course_id__code', 'course_id__name'
+    ).annotate(
+        registered=Count('id')
+    ).order_by('-registered', 'course_id__code')
+
+    rows = [{
+        'course_code': row['course_id__code'],
+        'course_name': row['course_id__name'],
+        'registered': row['registered'],
+    } for row in counts]
+
+    return Response({
+        'count': len(rows),
+        'registrations': sum(r['registered'] for r in rows),
+        'rows': rows,
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
+@role_required(DATABASE_REPORT_ROLES)
+def database_swayam_registrations(request):
+    """Swayam course registrations for a session, by term or by slot semester parity."""
+    from django.db.models import F, IntegerField, Q, Value
+    from django.db.models.functions import Mod
+    from applications.globals.programme_scope import scopes_for, scope_via_student
+
+    session = (request.query_params.get('session') or '').strip()
+    semester_type = (request.query_params.get('semester_type') or '').strip()
+    missing = [name for name, value in (
+        ('session', session), ('semester_type', semester_type)
+    ) if not value]
+    if missing:
+        return Response({'detail': f"Required: {', '.join(missing)}."}, status=400)
+
+    batch = (request.query_params.get('batch') or '').strip()
+    batch_year = None
+    if batch and batch.upper() != 'ALL':
+        try:
+            batch_year = int(batch)
+        except ValueError:
+            return Response({'detail': f"Batch '{batch}' is not a year."}, status=400)
+
+    regs = scope_via_student(
+        course_registration.objects.filter(
+            session=session, course_id__code__startswith='SW'),
+        scopes_for(request.user), 'student_id')
+    if batch_year is not None:
+        regs = regs.filter(student_id__batch=batch_year)
+
+    # A term also picks up slots of that parity, which is how registrations
+    # recorded under a neighbouring term still surface.
+    parity = {'Odd Semester': 1, 'Even Semester': 0}.get(semester_type)
+    if parity is None:
+        regs = regs.filter(semester_type=semester_type)
+    else:
+        regs = regs.annotate(
+            slot_parity=Mod(F('course_slot_id__semester__semester_no'),
+                            Value(2, output_field=IntegerField()),
+                            output_field=IntegerField())
+        ).filter(Q(semester_type=semester_type) | Q(slot_parity=parity))
+
+    regs = regs.select_related(
+        'student_id__id__user', 'course_id', 'course_slot_id__semester')
+
+    rows = []
+    for reg in regs:
+        user = reg.student_id.id.user
+        slot = reg.course_slot_id
+        rows.append({
+            'roll_no': reg.student_id_id,
+            'student_name': f'{user.first_name} {user.last_name}'.strip(),
+            'course_code': reg.course_id.code,
+            'course_name': reg.course_id.name,
+            'semester_no': slot.semester.semester_no if slot else None,
+        })
+    rows.sort(key=lambda r: (r['semester_no'] is None, r['semester_no'] or 0,
+                             r['course_code'], str(r['roll_no'])))
+
+    return Response({
+        'count': len(rows),
+        'students': len({r['roll_no'] for r in rows}),
+        'without_slot': sum(1 for r in rows if r['semester_no'] is None),
+        'rows': rows,
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
+@role_required(DATABASE_REPORT_ROLES)
+def database_semester_registrations(request):
+    """What a batch registered in one semester, one row per student and course code."""
+    from applications.globals.programme_scope import scopes_for, scope_via_student
+
+    batch = (request.query_params.get('batch') or '').strip()
+    semester = (request.query_params.get('semester') or '').strip()
+    missing = [name for name, value in (
+        ('batch', batch), ('semester', semester)
+    ) if not value]
+    if missing:
+        return Response({'detail': f"Required: {', '.join(missing)}."}, status=400)
+    try:
+        batch_year = int(batch)
+    except ValueError:
+        return Response({'detail': f"Batch '{batch}' is not a year."}, status=400)
+    try:
+        semester_no = int(semester)
+    except ValueError:
+        return Response({'detail': f"Semester '{semester}' is not a number."}, status=400)
+
+    regs = scope_via_student(
+        course_registration.objects.filter(
+            student_id__batch=batch_year, semester_id__semester_no=semester_no),
+        scopes_for(request.user), 'student_id',
+    ).select_related('student_id__id__user', 'course_id', 'semester_id')
+
+    rows = []
+    for reg in regs:
+        user = reg.student_id.id.user
+        rows.append({
+            'id': reg.id,
+            'roll_no': reg.student_id_id,
+            'semester': reg.semester_id.semester_no,
+            'student_name': f'{user.first_name} {user.last_name}'.strip(),
+            'course_code': reg.course_id.code,
+            'course_name': reg.course_id.name,
+            'credit': reg.course_id.credit,
+            'semester_type': reg.semester_type,
+            'registration_type': reg.registration_type,
+        })
+    # the id breaks ties so a repeated registration always resolves the same way
+    rows.sort(key=lambda r: (str(r['roll_no']), r['semester'], r['course_code'], r['id']))
+
+    deduped, seen = [], set()
+    for row in rows:
+        key = (row['roll_no'], row['semester'], row['course_code'])
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append({k: v for k, v in row.items() if k != 'id'})
+
+    return Response({
+        'count': len(deduped),
+        'students': len({r['roll_no'] for r in deduped}),
+        'credits': sum(r['credit'] or 0 for r in deduped),
+        'duplicates_removed': len(rows) - len(deduped),
+        'rows': deduped,
     })
 
 
