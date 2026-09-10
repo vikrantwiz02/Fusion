@@ -3402,18 +3402,10 @@ def generate_course_registration_receipt(request):
                 'credits': course.course_id.credit
             })
         
-        # CPI as of the previous semester, from the same helper the transcript uses.
+        # CPI as of the last completed term, summer terms included.
+        from applications.examination.api.views import previous_term_cpi
         prev_sem = (current_user.curr_semester_no or 0) - 1
-        prev_sem_cpi = None
-        if prev_sem >= 1:
-            from applications.examination.api.views import calculate_cpi_for_student
-            cpi, _, _ = calculate_cpi_for_student(
-                current_user, prev_sem,
-                'Odd Semester' if prev_sem % 2 else 'Even Semester')
-            if cpi is not None:
-                # One decimal, as calculate_cpi_for_student rounds it and the
-                # transcript prints it.
-                prev_sem_cpi = f'{cpi:.1f}'
+        prev_sem_cpi = previous_term_cpi(current_user, current_user.curr_semester_no)
 
         context = {
             'current_courseregistrations': course_list,
