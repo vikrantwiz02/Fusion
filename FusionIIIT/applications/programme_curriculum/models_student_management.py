@@ -209,6 +209,13 @@ class StudentBatchUpload(models.Model):
         max_length=500, blank=True, null=True,
         help_text="Shared Google Drive link to the resume"
     )
+    bank_name = models.CharField(max_length=150, blank=True, null=True)
+    bank_account_no = models.CharField(max_length=20, blank=True, null=True)
+    ifsc_code = models.CharField(max_length=11, blank=True, null=True)
+    joining_date = models.DateField(
+        blank=True, null=True,
+        help_text="Date of joining, shown on the assistantship sheet"
+    )
     photo = models.ImageField(upload_to='programme_curriculum/student_photos', blank=True, null=True, help_text="Passport photo (max 200KB)")
     signature = models.ImageField(upload_to='programme_curriculum/student_signatures', blank=True, null=True, help_text="Signature image (max 30KB)")
     # Images are stored in the DB (not on disk) so a plain pg_dump backs them up and restores them with the data.
@@ -750,6 +757,13 @@ class PhdStudentBatchUpload(models.Model):
     resume_link = models.URLField(
         max_length=500, blank=True, null=True,
         help_text="Shared Google Drive link to the resume"
+    )
+    bank_name = models.CharField(max_length=150, blank=True, null=True)
+    bank_account_no = models.CharField(max_length=20, blank=True, null=True)
+    ifsc_code = models.CharField(max_length=11, blank=True, null=True)
+    joining_date = models.DateField(
+        blank=True, null=True,
+        help_text="Date of joining, shown on the assistantship sheet"
     )
     photo = models.ImageField(upload_to='programme_curriculum/student_photos', blank=True, null=True, help_text="Passport photo (max 200KB)")
     signature = models.ImageField(upload_to='programme_curriculum/student_signatures', blank=True, null=True, help_text="Signature image (max 30KB)")

@@ -41,10 +41,23 @@ FILL_ONCE = (
 
 IMAGE_MAX_KB = {"photo": 200, "signature": 30}
 
+# Only PG and PhD students are paid a stipend, so only they are asked for
+# an account.
+BANK_FIELDS = ("bank_name", "bank_account_no", "ifsc_code")
+
+
+def _wants_bank_details(rec):
+    if isinstance(rec, PhdStudentBatchUpload):
+        return True
+    return (getattr(rec, "programme_type", "") or "").lower() == "pg"
+
 
 def _editable_fields(rec):
     filled = [f for f in FILL_ONCE if str(getattr(rec, f, "") or "").strip()]
-    return list(ALWAYS_EDITABLE) + [f for f in FILL_ONCE if f not in filled]
+    fields = list(ALWAYS_EDITABLE) + [f for f in FILL_ONCE if f not in filled]
+    if _wants_bank_details(rec):
+        fields += list(BANK_FIELDS)
+    return fields
 
 
 def _get_student_record(user):
@@ -98,6 +111,10 @@ def _serialize(rec):
         "state": rec.state or "",
         "address": rec.address or "",
         "resume_link": rec.resume_link or "",
+        "wants_bank_details": _wants_bank_details(rec),
+        "bank_name": rec.bank_name or "",
+        "bank_account_no": rec.bank_account_no or "",
+        "ifsc_code": rec.ifsc_code or "",
         "editable": _editable_fields(rec),
     }
 
@@ -171,13 +188,19 @@ def student_profile_update(request):
         return JsonResponse({"success": False, "message": "Invalid request data"}, status=400)
 
     allowed = set(_editable_fields(rec))
-    submitted = {k: v for k, v in data.items() if k in ALWAYS_EDITABLE or k in FILL_ONCE}
+    known = set(ALWAYS_EDITABLE) | set(FILL_ONCE) | set(BANK_FIELDS)
+    submitted = {k: v for k, v in data.items() if k in known}
     refused = sorted(set(submitted) - allowed)
     if refused:
+        def why(field):
+            if field in BANK_FIELDS:
+                return "Bank details are collected for PG and PhD students only"
+            return "This field can no longer be changed here"
+
         return JsonResponse(
             {"success": False,
-             "errors": {f: "This field can no longer be changed here" for f in refused},
-             "message": "Some fields are already filled in and cannot be edited"},
+             "errors": {f: why(f) for f in refused},
+             "message": "Some of those fields cannot be edited"},
             status=400)
 
     def text(field):
@@ -211,6 +234,15 @@ def student_profile_update(request):
         if not re.match(r"https://(drive|docs)\.google\.com/", link):
             errors["resume_link"] = (
                 "Paste a Google Drive or Google Docs link starting with https://")
+
+    if "ifsc_code" in submitted:
+        submitted["ifsc_code"] = text("ifsc_code").upper()
+        if text("ifsc_code") and not re.fullmatch(r"[A-Z]{4}0[A-Z0-9]{6}", text("ifsc_code")):
+            errors["ifsc_code"] = "IFSC must be 11 characters, like SBIN0001234"
+
+    if "bank_account_no" in submitted and text("bank_account_no"):
+        if not re.fullmatch(r"\d{9,18}", text("bank_account_no")):
+            errors["bank_account_no"] = "Account number must be 9 to 18 digits"
 
     if "parent_email" in submitted and text("parent_email"):
         try:
