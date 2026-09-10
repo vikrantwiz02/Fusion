@@ -205,6 +205,10 @@ class StudentBatchUpload(models.Model):
     parent_email = models.EmailField(blank=True, null=True, help_text="Parent Email ID")
     aadhar_number = models.CharField(max_length=12, blank=True, null=True)
     apaar_id = models.CharField(max_length=12, blank=True, null=True, help_text="APAAR ID (12 digits), collected at first login")
+    resume_link = models.URLField(
+        max_length=500, blank=True, null=True,
+        help_text="Shared Google Drive link to the resume"
+    )
     photo = models.ImageField(upload_to='programme_curriculum/student_photos', blank=True, null=True, help_text="Passport photo (max 200KB)")
     signature = models.ImageField(upload_to='programme_curriculum/student_signatures', blank=True, null=True, help_text="Signature image (max 30KB)")
     # Images are stored in the DB (not on disk) so a plain pg_dump backs them up and restores them with the data.
@@ -742,6 +746,10 @@ class PhdStudentBatchUpload(models.Model):
     apaar_id = models.CharField(
         max_length=12, blank=True, null=True,
         help_text="APAAR ID (12 digits), collected at first login"
+    )
+    resume_link = models.URLField(
+        max_length=500, blank=True, null=True,
+        help_text="Shared Google Drive link to the resume"
     )
     photo = models.ImageField(upload_to='programme_curriculum/student_photos', blank=True, null=True, help_text="Passport photo (max 200KB)")
     signature = models.ImageField(upload_to='programme_curriculum/student_signatures', blank=True, null=True, help_text="Signature image (max 30KB)")
