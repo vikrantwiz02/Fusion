@@ -3402,13 +3402,28 @@ def generate_course_registration_receipt(request):
                 'credits': course.course_id.credit
             })
         
+        # CPI as of the previous semester, from the same helper the transcript uses.
+        prev_sem = (current_user.curr_semester_no or 0) - 1
+        prev_sem_cpi = None
+        if prev_sem >= 1:
+            from applications.examination.api.views import calculate_cpi_for_student
+            cpi, _, _ = calculate_cpi_for_student(
+                current_user, prev_sem,
+                'Odd Semester' if prev_sem % 2 else 'Even Semester')
+            if cpi is not None:
+                # One decimal, as calculate_cpi_for_student rounds it and the
+                # transcript prints it.
+                prev_sem_cpi = f'{cpi:.1f}'
+
         context = {
             'current_courseregistrations': course_list,
             'semester_no': current_user.curr_semester_no,
             'name': request.user.first_name + request.user.last_name,
             'roll_no' : current_user.id_id,
             'batch': batch.name+' '+str(batch.year),
-            'branch': curr_id.name.split(' ')[0]
+            'branch': curr_id.name.split(' ')[0],
+            'prev_semester_no': prev_sem if prev_sem >= 1 else None,
+            'prev_sem_cpi': prev_sem_cpi,
         }
         return JsonResponse(context)
     
