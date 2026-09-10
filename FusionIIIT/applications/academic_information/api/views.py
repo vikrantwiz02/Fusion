@@ -1459,6 +1459,133 @@ def available_courses(request):
     return Response(data)
 
 
+DATABASE_REPORT_ROLES = ['acadadmin', 'Dean Academic', 'Acad UG', 'Acad PG', 'Acad Ph.D.']
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
+@role_required(DATABASE_REPORT_ROLES)
+def database_report_filters(request):
+    """The session, semester type and batch values that actually have registrations."""
+    from applications.globals.programme_scope import scopes_for, scope_via_student
+
+    regs = scope_via_student(
+        course_registration.objects.all(), scopes_for(request.user), 'student_id')
+    sessions = sorted(
+        {v for v in regs.values_list('session', flat=True).distinct() if v},
+        reverse=True)
+    batches = sorted(
+        {v for v in regs.values_list('student_id__batch', flat=True).distinct() if v},
+        reverse=True)
+    semester_types = sorted(
+        {v for v in regs.values_list('semester_type', flat=True).distinct() if v})
+    return Response({
+        'sessions': sessions,
+        'semester_types': semester_types,
+        'batches': batches,
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
+@role_required(DATABASE_REPORT_ROLES)
+def database_course_registrations(request):
+    """One row per course registration for a session, semester type and batch."""
+    from applications.globals.programme_scope import scopes_for, scope_via_student
+
+    session = (request.query_params.get('session') or '').strip()
+    semester_type = (request.query_params.get('semester_type') or '').strip()
+    batch = (request.query_params.get('batch') or '').strip()
+    missing = [name for name, value in (
+        ('session', session), ('semester_type', semester_type), ('batch', batch)
+    ) if not value]
+    if missing:
+        return Response({'detail': f"Required: {', '.join(missing)}."}, status=400)
+    try:
+        batch_year = int(batch)
+    except ValueError:
+        return Response({'detail': f"Batch '{batch}' is not a year."}, status=400)
+
+    regs = scope_via_student(
+        course_registration.objects.filter(
+            session=session, semester_type=semester_type,
+            student_id__batch=batch_year),
+        scopes_for(request.user), 'student_id',
+    ).select_related(
+        'student_id__id__user', 'course_id', 'course_slot_id'
+    ).order_by('student_id__id_id', 'course_slot_id__name', 'course_id__code')
+
+    rows = []
+    for reg in regs:
+        student = reg.student_id
+        user = student.id.user
+        rows.append({
+            'roll_no': student.id_id,
+            'student_name': f'{user.first_name} {user.last_name}'.strip(),
+            'batch': student.batch,
+            'programme': student.programme,
+            'course_slot': reg.course_slot_id.name if reg.course_slot_id else '',
+            'course_code': reg.course_id.code,
+            'course_name': reg.course_id.name,
+            'course_credit': reg.course_id.credit,
+            'registration_type': reg.registration_type,
+        })
+
+    return Response({
+        'count': len(rows),
+        'students': len({r['roll_no'] for r in rows}),
+        'credits': sum(r['course_credit'] or 0 for r in rows),
+        'rows': rows,
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
+@role_required(DATABASE_REPORT_ROLES)
+def database_backlog_registrations(request):
+    """Registrations sitting in a backlog slot for a session and semester type."""
+    from applications.globals.programme_scope import scopes_for, scope_via_student
+
+    session = (request.query_params.get('session') or '').strip()
+    semester_type = (request.query_params.get('semester_type') or '').strip()
+    missing = [name for name, value in (
+        ('session', session), ('semester_type', semester_type)
+    ) if not value]
+    if missing:
+        return Response({'detail': f"Required: {', '.join(missing)}."}, status=400)
+
+    regs = scope_via_student(
+        course_registration.objects.filter(
+            session=session, semester_type=semester_type,
+            course_slot_id__name__startswith='BL'),
+        scopes_for(request.user), 'student_id',
+    ).select_related(
+        'student_id__id__user', 'course_id', 'course_slot_id', 'semester_id')
+
+    rows = []
+    for reg in regs:
+        user = reg.student_id.id.user
+        rows.append({
+            'roll_no': reg.student_id_id,
+            'name': f'{user.first_name} {user.last_name}'.strip(),
+            'semester': reg.semester_id.semester_no if reg.semester_id else '',
+            'course_slot': reg.course_slot_id.name if reg.course_slot_id else '',
+            'course_code': reg.course_id.code,
+            'course_name': reg.course_id.name,
+            'registration_type': reg.registration_type,
+        })
+    rows.sort(key=lambda r: (r['name'], r['course_code']))
+
+    return Response({
+        'count': len(rows),
+        'students': len({r['roll_no'] for r in rows}),
+        'rows': rows,
+    })
+
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 @authentication_classes([TokenAuthentication])
