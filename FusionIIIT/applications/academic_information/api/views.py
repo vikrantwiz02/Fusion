@@ -1434,16 +1434,26 @@ def available_courses(request):
         year_int = int(year_parts[0])  # Odd/Summer semester is in first year (e.g., 2025 for 2025-26)
     
     for c in courses:
-        instructor_name = "TBA"
-        course_instructor = CourseInstructor.objects.filter(course_id=c, year=year_int, semester_type=sem).first()
-        if course_instructor:
-            instructor_name = f"{course_instructor.instructor_id.id.user.first_name} {course_instructor.instructor_id.id.user.last_name}".strip()
+        # A course can be taught by several faculty, one offering per section,
+        # so report them per section instead of picking whichever comes first.
+        instructors_by_section = {}
+        names = []
+        for off in CourseInstructor.objects.filter(
+                course_id=c, year=year_int, semester_type=sem
+        ).select_related('instructor_id__id__user'):
+            user = off.instructor_id.id.user
+            name = f"{user.first_name} {user.last_name}".strip() or str(off.instructor_id_id)
+            if off.section_label:
+                instructors_by_section.setdefault(off.section_label, name)
+            if name not in names:
+                names.append(name)
 
         data.append({
             "id": c.id,
             "code": c.code,
             "name": c.name,
-            "instructor": instructor_name,
+            "instructor": ", ".join(names) if names else "TBA",
+            "instructors_by_section": instructors_by_section,
             "sections": sorted(section_map.get(c.id, set())),
         })
     return Response(data)
@@ -1551,11 +1561,19 @@ def export_all_courses_zip(request):
                 cols = [c[0] for c in cursor.description]
                 students = [dict(zip(cols, row)) for row in cursor.fetchall()]
 
-            # Instructor
-            instructor_name = 'TBA'
-            ci = CourseInstructor.objects.filter(course_id=course_obj, year=year_int, semester_type=semester_type).first()
-            if ci:
-                instructor_name = f'{ci.instructor_id.id.user.first_name} {ci.instructor_id.id.user.last_name}'.strip()
+            # Instructor. This export covers whole courses rather than one
+            # section, so a course with several offerings names them all.
+            names = []
+            for off in CourseInstructor.objects.filter(
+                    course_id=course_obj, year=year_int, semester_type=semester_type
+            ).select_related('instructor_id__id__user'):
+                user = off.instructor_id.id.user
+                name = f'{user.first_name} {user.last_name}'.strip()
+                if off.section_label:
+                    name = f'{name} ({off.section_label})'
+                if name and name not in names:
+                    names.append(name)
+            instructor_name = ', '.join(names) if names else 'TBA'
 
             # Build workbook
             wb = OpenpyxlWorkbook()
