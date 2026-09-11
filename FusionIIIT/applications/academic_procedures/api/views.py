@@ -3292,11 +3292,17 @@ def submit_preregistration(request):
     return JsonResponse({"status": "success"}, status=201)
 
 
+# A replacement is only for an unsatisfactory grade, so these bar one.
+SATISFACTORY_GRADES = ['O', 'A+', 'A', 'B+', 'B', 'C+', 'S']
+
+
 @api_view(['GET'])
 @authentication_classes([TokenAuthentication])
 @permission_classes([IsAuthenticated])
 def swayam_availability(request):
     """How many Swayam slots the student has left, and which path can still use them."""
+    from django.db.models import Q
+
     try:
         student = Student.objects.get(id=request.user.extrainfo)
         semester = Semester.objects.filter(
@@ -3324,6 +3330,16 @@ def swayam_availability(request):
         taken = used_by['Extra_Credits'] | used_by['Swayam_Replace'] | registered
         free = all_slots.exclude(id__in=taken).count()
 
+        # A frozen source needs only one new course, so one free slot is enough.
+        frozen_source = course_registration.objects.filter(
+            Q(course_slot_id__name__startswith="OE")
+            | Q(course_slot_id__name__startswith="BL"),
+            student_id=student,
+            semester_id=semester,
+            course_id__code__startswith="SW",
+        ).exists()
+        replace_needs = 1 if frozen_source else 2
+
         return JsonResponse({
             "total_slots": total,
             "free_slots": free,
@@ -3332,9 +3348,11 @@ def swayam_availability(request):
             # False when the semester has no Swayam slots at all, which is not
             # the same as having spent them; the panels explain that case.
             "applicable": total > 0,
-            # A replacement has to name two new Swayam courses, so it needs two.
+            # A replacement names two new Swayam courses, or one when this
+            # semester's Swayam is frozen as the source.
             "can_extra_credit": free >= 1,
-            "can_replace": free >= 2,
+            "can_replace": free >= replace_needs,
+            "replace_slots_needed": replace_needs,
         })
     except Student.DoesNotExist:
         return JsonResponse({"error": "Student not found"}, status=404)
@@ -3546,6 +3564,8 @@ def submit_swayam_registration(request):
 @role_required(['student'])
 @block_pg_phd
 def swayam_replace_check(request):
+    from django.db.models import Q
+
     try:
         current_user = request.user
         user_details = current_user.extrainfo
@@ -3578,12 +3598,16 @@ def swayam_replace_check(request):
                 "request_status": existing_request.status,
             })
         
+        # Replaceable either way: a Swayam that took an elective slot (OE) or one
+        # being re-done as a backlog (BL).
         existing_sw = course_registration.objects.filter(
+            Q(course_slot_id__name__startswith="OE")
+            | Q(course_slot_id__name__startswith="BL"),
             student_id=student,
             semester_id=current_semester,
             course_id__code__startswith="SW",
-            course_slot_id__name__startswith="OE"
-        ).select_related('course_id', 'course_slot_id').first()
+        ).select_related('course_id', 'course_slot_id').order_by(
+            'course_slot_id__name', 'course_id__code').first()
         
         if existing_sw:
             all_sw_slots = CourseSlot.objects.filter(
@@ -3635,12 +3659,19 @@ def swayam_replace_check(request):
                         semester_no=sem_no
                     )
 
-                    has_oe_courses = course_registration.objects.filter(
-                        student_id=student,
-                        semester_id=sem,
-                        course_slot_id__name__startswith="OE"
-                    ).exists()
-                    
+                    # A semester holding only passed electives has nothing to
+                    # offer, so leave it out rather than open an empty list.
+                    has_oe_courses = False
+                    for reg in course_registration.objects.filter(
+                            student_id=student,
+                            semester_id=sem,
+                            course_slot_id__name__startswith="OE",
+                    ).select_related('course_id'):
+                        grade = latest_grade(current_user.username, reg.course_id)
+                        if grade and grade.grade not in SATISFACTORY_GRADES:
+                            has_oe_courses = True
+                            break
+
                     if has_oe_courses:
                         available_semesters.append({
                             "semester_no": sem_no,
@@ -3806,21 +3837,15 @@ def swayam_replace_courses(request):
             course_slot_id=slot_id
         ).select_related('course_id')
 
-        # Exclude courses where student already has a satisfactory grade (not eligible for replacement)
-        # Grades are stored in online_cms_student_grades (Student_grades model) by roll_no (username)
-        blocked_grades = ['O', 'A+', 'A', 'B+', 'B', 'C+']
+        # Offer only what a replacement can actually be registered against: an
+        # unsatisfactory grade that is already on record.
         roll_no = current_user.username
         courses_list = []
         for reg in registrations:
             course = reg.course_id
-            # Check if this course has a published good grade in Student_grades
-            has_good_grade = Student_grades.objects.filter(
-                roll_no=roll_no,
-                course_id=course,
-                grade__in=blocked_grades
-            ).exists()
-            if has_good_grade:
-                continue  # Skip — this course has a satisfactory grade and cannot be replaced
+            grade = latest_grade(roll_no, course)
+            if grade is None or grade.grade in SATISFACTORY_GRADES:
+                continue
             courses_list.append({
                 'id': course.id,
                 'code': course.code,
@@ -4022,17 +4047,28 @@ def swayam_replace_submit(request):
             }, status=400)
         
         # Validate grade: source course must NOT have a satisfactory grade (O, A+, A, B+, B, C+)
-        blocked_grades = ['O', 'A+', 'A', 'B+', 'B', 'C+', 'S']
         roll_no = current_user.username
         has_blocked_grade = Student_grades.objects.filter(
             roll_no=roll_no,
             course_id=old_course,
-            grade__in=blocked_grades
+            grade__in=SATISFACTORY_GRADES
         ).exists()
         
         if has_blocked_grade:
             return JsonResponse({
                 "error": "You are not eligible for replacement of this course. Replacement is only allowed for courses with unsatisfactory grades."
+            }, status=400)
+
+        # Backlog and improvement both come off the source grade, so without one
+        # there is nothing to register against. Only this semester's Swayam in an
+        # elective slot is exempt, because that registers as extra credit.
+        slot_name = old_course_slot.name if old_course_slot else ''
+        extra_credit_path = is_current_semester and slot_name.startswith('OE')
+        if not extra_credit_path and not latest_grade(roll_no, old_course):
+            return JsonResponse({
+                "error": "This course has no grade on record yet, so it cannot be "
+                         "replaced as a backlog or improvement. Please contact the "
+                         "academic section once the grade is published."
             }, status=400)
 
         if is_current_semester:
@@ -4299,7 +4335,10 @@ def admin_swayam_approve(request):
             ).first()
 
             roll_no = req_obj.student.id.user.username
-            if req_obj.is_current_semester:
+            source_slot = req_obj.course_slot.name if req_obj.course_slot else ''
+            # Only a Swayam that took an elective slot this semester is extra
+            # credit; a backlog one, or an earlier semester, goes by the grade.
+            if req_obj.is_current_semester and source_slot.startswith('OE'):
                 new_registration_type = 'Extra Credits'
             else:
                 backlog_grades = ['F', 'CD', 'X']
