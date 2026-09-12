@@ -4135,9 +4135,12 @@ def student_swayam_requests(request):
         student = Student.objects.get(id=user_details)
 
         request_type = request.GET.get('request_type')
+        academic_year, semester_type = generate_current_session(
+            timezone.now().year, student.curr_semester_no)
         requests_query = SwayamReplacementRequest.objects.filter(
             student=student,
-            semester__semester_no=student.curr_semester_no
+            academic_year=academic_year,
+            semester_type=semester_type,
         )
 
         if request_type:
