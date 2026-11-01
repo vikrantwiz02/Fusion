@@ -135,8 +135,9 @@ def _reference_number(roll_number, issued_on, serial):
 
 def render_pointer_conversion_pdf(
         context, cpi_text, min_cpi, reference_number, issued_on):
-    """Laid out as the Academic section's Pointer Conversion format, set in
-    Carlito, the metric match for the Calibri the format uses."""
+    """Laid out as the Academic section's Pointer Conversion format, in the
+    same type as the bonafide and every other certificate: Caladea, at the
+    bonafide's sizes, spacing and margins."""
     from reportlab.pdfbase.pdfmetrics import stringWidth
     from reportlab.platypus import ListFlowable, ListItem
 
@@ -145,38 +146,36 @@ def render_pointer_conversion_pdf(
         output,
         pagesize=A4,
         topMargin=3.5 * cm,
-        rightMargin=2 * cm,
+        rightMargin=1.5 * cm,
         bottomMargin=2 * cm,
-        leftMargin=2 * cm,
+        leftMargin=1.5 * cm,
         title='Pointer Conversion Certificate',
         author=settings.BONAFIDE_INSTITUTE_NAME,
     )
     register_certificate_fonts()
 
     header_style = ParagraphStyle(
-        'Header', fontName='Carlito-Bold', fontSize=11, leading=15)
+        'Header', fontName='Caladea-Bold', fontSize=11, leading=15)
     heading_style = ParagraphStyle(
-        'Heading', fontName='Carlito-Bold', fontSize=12, leading=16,
+        'Heading', fontName='Caladea-Bold', fontSize=11, leading=15,
         alignment=TA_CENTER)
     body_style = ParagraphStyle(
-        'Body', fontName='Carlito', fontSize=12, leading=24,
+        'Body', fontName='Caladea', fontSize=12, leading=20,
         alignment=TA_JUSTIFY)
-    intro_style = ParagraphStyle(
-        'Intro', parent=body_style, leftIndent=0.6 * cm)
     issued_style = ParagraphStyle(
-        'Issued', parent=body_style, fontName='Carlito-Bold',
-        leftIndent=1.3 * cm)
+        'Issued', parent=body_style, fontName='Caladea-Bold',
+        leftIndent=0.7 * cm)
     detail_style = ParagraphStyle(
-        'Detail', fontName='Carlito', fontSize=12, leading=18)
+        'Detail', fontName='Caladea', fontSize=12, leading=20)
     signature_style = ParagraphStyle(
-        'Signature', fontName='Carlito-Bold', fontSize=11, leading=15,
-        leftIndent=0.6 * cm)
+        'Signature', fontName='Caladea-Bold', fontSize=11, leading=15,
+        alignment=TA_JUSTIFY)
 
     # The reference block sits at the right margin with its two lines
     # starting together, as the format prints them.
     right_lines = [escape(reference_number),
                    f'Date \u2013 {issued_on.strftime("%d.%m.%Y")}']
-    right_width = max(stringWidth(line, 'Carlito-Bold', 11)
+    right_width = max(stringWidth(line, 'Caladea-Bold', 11)
                       for line in right_lines) + 2
     reference_block = Table(
         [[Paragraph('<br/>'.join(right_lines), header_style)]],
@@ -221,8 +220,8 @@ def render_pointer_conversion_pdf(
                 'obtain the numerical percentage.',
                 body_style)),
         ],
-        bulletType='1', bulletFormat='%s.', bulletFontName='Carlito',
-        bulletFontSize=12, leftIndent=1.3 * cm, bulletDedent=0.6 * cm,
+        bulletType='1', bulletFormat='%s.', bulletFontName='Caladea',
+        bulletFontSize=12, leftIndent=0.7 * cm, bulletDedent=0.6 * cm,
     )
 
     detail_rows = [
@@ -235,31 +234,31 @@ def render_pointer_conversion_pdf(
             ('CPI', escape(str(cpi_text or '\u2026\u2026\u2026\u2026\u2026'))),
         )
     ]
-    # The labels line up under the numbered points, 1.3 cm in.
-    details = Table(detail_rows, colWidths=[3.5 * cm, 0.5 * cm, 12 * cm],
+    # The labels line up under the numbered points.
+    details = Table(detail_rows, colWidths=[2.9 * cm, 0.5 * cm, 12 * cm],
                     hAlign='LEFT')
     details.setStyle(TableStyle([
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-        ('LEFTPADDING', (0, 0), (0, -1), 1.3 * cm),
+        ('LEFTPADDING', (0, 0), (0, -1), 0.7 * cm),
         ('LEFTPADDING', (1, 0), (-1, -1), 0),
         ('RIGHTPADDING', (0, 0), (-1, -1), 0),
-        ('TOPPADDING', (0, 0), (-1, -1), 3),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('TOPPADDING', (0, 0), (-1, -1), 0),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
     ]))
 
     story = [
         header,
-        Spacer(1, 2.2 * cm),
+        Spacer(1, 1.65 * cm),
         Paragraph('<u>TO WHOM SO EVER IT MAY CONCERN</u>', heading_style),
-        Spacer(1, 0.5 * cm),
-        Paragraph('This is to certify that:', intro_style),
+        Spacer(1, 1.25 * cm),
+        Paragraph('This is to certify that:', body_style),
         Spacer(1, 0.2 * cm),
         points,
-        Spacer(1, 1.2 * cm),
+        Spacer(1, 0.9 * cm),
         Paragraph('Issued to :', issued_style),
         Spacer(1, 0.2 * cm),
         details,
-        Spacer(1, 2.2 * cm),
+        Spacer(1, 1.6 * cm),
         Paragraph(escape(settings.BONAFIDE_SIGNATORY_NAME), signature_style),
     ]
 
