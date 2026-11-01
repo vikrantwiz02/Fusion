@@ -388,6 +388,7 @@ class BonafideCertificate(models.Model):
         ('demand', 'Demand Letter'),
         ('fee_structure', 'Fee Structure Certificate'),
         ('medium_of_instruction', 'Medium of Instruction Certificate'),
+        ('pointer_conv', 'Pointer Conversion Certificate'),
     )
 
     certificate_type = models.CharField(
