@@ -31,6 +31,7 @@ from .bonafide_certificate import (
     _student_name,
     _student_queryset,
     build_certificate_context,
+    register_certificate_fonts,
     superscript_ordinal,
 )
 
@@ -55,45 +56,33 @@ def render_medium_of_instruction_pdf(context, reference_number, issued_on):
     document = SimpleDocTemplate(
         output,
         pagesize=A4,
-        topMargin=2.5 * cm,
+        topMargin=3.5 * cm,
         rightMargin=1.5 * cm,
-        bottomMargin=2.5 * cm,
+        bottomMargin=2 * cm,
         leftMargin=1.5 * cm,
         title='Medium of Instruction Certificate',
         author=settings.BONAFIDE_INSTITUTE_NAME,
     )
+    # The same type as the bonafide and every other certificate.
+    register_certificate_fonts()
     header_style = ParagraphStyle(
-        'Header',
-        fontName='Helvetica-Bold',
-        fontSize=13.5,
-        leading=18,
-        alignment=TA_LEFT,
+        'Header', fontName='Caladea-Bold', fontSize=11,
+        leading=15, alignment=TA_LEFT,
     )
     header_right_style = ParagraphStyle(
-        'HeaderRight',
-        parent=header_style,
-        alignment=TA_RIGHT,
+        'HeaderRight', parent=header_style, alignment=TA_RIGHT,
     )
     heading_style = ParagraphStyle(
-        'Heading',
-        fontName='Helvetica-Bold',
-        fontSize=15,
-        leading=19,
-        alignment=TA_CENTER,
+        'Heading', fontName='Caladea-Bold', fontSize=11,
+        leading=15, alignment=TA_CENTER,
     )
     body_style = ParagraphStyle(
-        'Body',
-        fontName='Helvetica',
-        fontSize=13.5,
-        leading=22,
-        alignment=TA_JUSTIFY,
+        'Body', fontName='Caladea', fontSize=12,
+        leading=20, alignment=TA_JUSTIFY,
     )
     signature_style = ParagraphStyle(
-        'Signature',
-        fontName='Helvetica-Bold',
-        fontSize=13.5,
-        leading=18,
-        alignment=TA_LEFT,
+        'Signature', fontName='Caladea-Bold', fontSize=11,
+        leading=15, alignment=TA_LEFT,
     )
 
     header = Table(
@@ -139,7 +128,7 @@ def render_medium_of_instruction_pdf(context, reference_number, issued_on):
         Paragraph('<u>TO WHOM SO EVER IT MAY CONCERN</u>', heading_style),
         Spacer(1, 1.25 * cm),
         Paragraph(first_text, body_style),
-        Spacer(1, 1.65 * cm),
+        Spacer(1, 1.6 * cm),
         Paragraph(f'({escape(settings.BONAFIDE_SIGNATORY_NAME)})', signature_style),
     ]
 
