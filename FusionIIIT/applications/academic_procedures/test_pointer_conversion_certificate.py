@@ -99,6 +99,9 @@ class PointerConversionCertificateTests(TestCase):
         ).first()
         self.assertIsNotNone(cert)
         self.assertEqual(cert.fee_rows.get('cpi'), '7.3')
+        # Numbered as the bonafide certificate: the serial follows the roll.
+        self.assertTrue(cert.reference_number.endswith(f'/21BCS032/{cert.pk:03d}'))
+        self.assertEqual(response['X-Certificate-Reference'], cert.reference_number)
 
     def test_list_and_history_pdf_api(self):
         # Generate one first

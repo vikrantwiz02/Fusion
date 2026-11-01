@@ -5,10 +5,11 @@ from xml.sax.saxutils import escape
 from django.conf import settings
 from django.core.paginator import Paginator
 from django.db import transaction
+from django.db.models import Max
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_RIGHT
+from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
@@ -124,49 +125,69 @@ def build_pointer_conversion_context(student):
     }
 
 
+def _reference_number(roll_number, issued_on, serial):
+    """Numbered as the bonafide certificate is: the serial follows the roll
+    number, IIITDMJ/AR/<year>/<month>/<roll>/<serial>."""
+    prefix = settings.BONAFIDE_REFERENCE_PREFIX.rstrip('/')
+    return (f'{prefix}/{issued_on.year}/{issued_on.month:02d}/'
+            f'{roll_number}/{serial:03d}')
+
+
 def render_pointer_conversion_pdf(
         context, cpi_text, min_cpi, reference_number, issued_on):
+    """Laid out as the Academic section's Pointer Conversion format, set in
+    Carlito, the metric match for the Calibri the format uses."""
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    from reportlab.platypus import ListFlowable, ListItem
+
     output = BytesIO()
     document = SimpleDocTemplate(
         output,
         pagesize=A4,
         topMargin=3.5 * cm,
-        rightMargin=1.5 * cm,
+        rightMargin=2 * cm,
         bottomMargin=2 * cm,
-        leftMargin=1.5 * cm,
+        leftMargin=2 * cm,
         title='Pointer Conversion Certificate',
         author=settings.BONAFIDE_INSTITUTE_NAME,
     )
     register_certificate_fonts()
 
     header_style = ParagraphStyle(
-        'Header', fontName='Caladea-Bold', fontSize=11,
-        leading=15, alignment=TA_JUSTIFY,
-    )
-    header_right_style = ParagraphStyle(
-        'HeaderRight', parent=header_style, alignment=TA_RIGHT,
-    )
+        'Header', fontName='Carlito-Bold', fontSize=11, leading=15)
     heading_style = ParagraphStyle(
-        'Heading', fontName='Caladea-Bold', fontSize=11,
-        leading=15, alignment=TA_CENTER,
-    )
+        'Heading', fontName='Carlito-Bold', fontSize=12, leading=16,
+        alignment=TA_CENTER)
     body_style = ParagraphStyle(
-        'Body', fontName='Caladea', fontSize=12,
-        leading=20, alignment=TA_JUSTIFY,
-    )
-    detail_label_style = ParagraphStyle(
-        'DetailLabel', fontName='Caladea-Bold', fontSize=12,
-        leading=20,
-    )
-    detail_val_style = ParagraphStyle(
-        'DetailVal', fontName='Caladea', fontSize=12,
-        leading=20,
-    )
+        'Body', fontName='Carlito', fontSize=12, leading=24,
+        alignment=TA_JUSTIFY)
+    intro_style = ParagraphStyle(
+        'Intro', parent=body_style, leftIndent=0.6 * cm)
+    issued_style = ParagraphStyle(
+        'Issued', parent=body_style, fontName='Carlito-Bold',
+        leftIndent=1.3 * cm)
+    detail_style = ParagraphStyle(
+        'Detail', fontName='Carlito', fontSize=12, leading=18)
     signature_style = ParagraphStyle(
-        'Signature', fontName='Caladea-Bold', fontSize=11,
-        leading=15, alignment=TA_JUSTIFY,
-    )
+        'Signature', fontName='Carlito-Bold', fontSize=11, leading=15,
+        leftIndent=0.6 * cm)
 
+    # The reference block sits at the right margin with its two lines
+    # starting together, as the format prints them.
+    right_lines = [escape(reference_number),
+                   f'Date \u2013 {issued_on.strftime("%d.%m.%Y")}']
+    right_width = max(stringWidth(line, 'Carlito-Bold', 11)
+                      for line in right_lines) + 2
+    reference_block = Table(
+        [[Paragraph('<br/>'.join(right_lines), header_style)]],
+        colWidths=[right_width], hAlign='RIGHT')
+    reference_block.setStyle(TableStyle([
+        ('LEFTPADDING', (0, 0), (-1, -1), 0),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+        ('TOPPADDING', (0, 0), (-1, -1), 0),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+    ]))
+    page_width = A4[0] - document.leftMargin - document.rightMargin
     header = Table(
         [[
             Paragraph(
@@ -174,13 +195,9 @@ def render_pointer_conversion_pdf(
                 f'{escape(settings.BONAFIDE_SIGNATORY_TITLE)}',
                 header_style,
             ),
-            Paragraph(
-                f'{escape(reference_number)}<br/>'
-                f'Date – {issued_on.strftime("%d.%m.%Y")}',
-                header_right_style,
-            ),
+            reference_block,
         ]],
-        colWidths=[9 * cm, 9 * cm],
+        colWidths=[page_width - right_width, right_width],
     )
     header.setStyle(TableStyle([
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
@@ -190,65 +207,60 @@ def render_pointer_conversion_pdf(
         ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
     ]))
 
+    points = ListFlowable(
+        [
+            ListItem(Paragraph(
+                'The graduation requirement for '
+                f'<b>{escape(context["programme"])}</b> '
+                f'({escape(context["programme_abbr"])}) programme at '
+                'PDPM-IIITDM Jabalpur is a minimum CPI of '
+                f'{escape(str(min_cpi))} out of the maximum of 10.0.',
+                body_style)),
+            ListItem(Paragraph(
+                'Notionally, the CPI may be multiplied by a factor of 10 to '
+                'obtain the numerical percentage.',
+                body_style)),
+        ],
+        bulletType='1', bulletFormat='%s.', bulletFontName='Carlito',
+        bulletFontSize=12, leftIndent=1.3 * cm, bulletDedent=0.6 * cm,
+    )
+
     detail_rows = [
-        [
-            Paragraph('Name', detail_label_style),
-            Paragraph(':', detail_label_style),
-            Paragraph(f'{escape(context["salutation"])} {escape(context["name"])}', detail_val_style),
-        ],
-        [
-            Paragraph('Roll No.', detail_label_style),
-            Paragraph(':', detail_label_style),
-            Paragraph(escape(context["roll_number"]), detail_val_style),
-        ],
-        [
-            Paragraph('Branch', detail_label_style),
-            Paragraph(':', detail_label_style),
-            Paragraph(escape(context["discipline"]), detail_val_style),
-        ],
-        [
-            Paragraph('CPI', detail_label_style),
-            Paragraph(':', detail_label_style),
-            Paragraph(escape(str(cpi_text or '……………')), detail_val_style),
-        ],
+        [Paragraph(label, detail_style), Paragraph(':', detail_style),
+         Paragraph(value, detail_style)]
+        for label, value in (
+            ('Name', f'{escape(context["salutation"])} {escape(context["name"])}'),
+            ('Roll No.', escape(context['roll_number'])),
+            ('Branch', escape(context['discipline'])),
+            ('CPI', escape(str(cpi_text or '\u2026\u2026\u2026\u2026\u2026'))),
+        )
     ]
-    detail_table = Table(detail_rows, colWidths=[2.5 * cm, 0.6 * cm, 13 * cm])
-    detail_table.setStyle(TableStyle([
+    # The labels line up under the numbered points, 1.3 cm in.
+    details = Table(detail_rows, colWidths=[3.5 * cm, 0.5 * cm, 12 * cm],
+                    hAlign='LEFT')
+    details.setStyle(TableStyle([
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-        ('LEFTPADDING', (0, 0), (-1, -1), 0),
+        ('LEFTPADDING', (0, 0), (0, -1), 1.3 * cm),
+        ('LEFTPADDING', (1, 0), (-1, -1), 0),
         ('RIGHTPADDING', (0, 0), (-1, -1), 0),
-        ('TOPPADDING', (0, 0), (-1, -1), 2),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
     ]))
 
     story = [
         header,
-        Spacer(1, 46),
+        Spacer(1, 2.2 * cm),
         Paragraph('<u>TO WHOM SO EVER IT MAY CONCERN</u>', heading_style),
-        Spacer(1, 36),
-        Paragraph('&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;This is to certify that:', body_style),
-        Spacer(1, 14),
-        Paragraph(
-            f'1. The graduation requirement for {escape(context["programme"])} '
-            f'({escape(context["programme_abbr"])}) programme at PDPM-IIITDM Jabalpur '
-            f'is a minimum CPI of {escape(str(min_cpi))} out of the maximum of 10.0.',
-            body_style,
-        ),
-        Spacer(1, 12),
-        Paragraph(
-            '2. Notionally, the CPI may be multiplied by a factor of 10 to obtain the numerical percentage.',
-            body_style,
-        ),
-        Spacer(1, 24),
-        Paragraph('<b>Issued to :</b>', body_style),
-        Spacer(1, 12),
-        detail_table,
-        Spacer(1, 46),
-        Paragraph(
-            f'{escape(settings.BONAFIDE_SIGNATORY_NAME)}<br/>'
-            f'{escape(settings.BONAFIDE_SIGNATORY_TITLE)}',
-            signature_style,
-        ),
+        Spacer(1, 0.5 * cm),
+        Paragraph('This is to certify that:', intro_style),
+        Spacer(1, 0.2 * cm),
+        points,
+        Spacer(1, 1.2 * cm),
+        Paragraph('Issued to :', issued_style),
+        Spacer(1, 0.2 * cm),
+        details,
+        Spacer(1, 2.2 * cm),
+        Paragraph(escape(settings.BONAFIDE_SIGNATORY_NAME), signature_style),
     ]
 
     document.build(story)
@@ -277,8 +289,9 @@ def pointer_conversion_student(request):
 
     context = build_pointer_conversion_context(student)
     now = timezone.now()
-    prefix = settings.BONAFIDE_REFERENCE_PREFIX.rstrip('/')
-    reference_preview = f'{prefix}/{now.year}/{now.month:02d}/{roll_number}'
+    next_serial = (BonafideCertificate.objects.aggregate(
+        max_id=Max('pk'))['max_id'] or 0) + 1
+    reference_preview = _reference_number(roll_number, now.date(), next_serial)
 
     certificate_meta = {
         'signatory_name': settings.BONAFIDE_SIGNATORY_NAME,
@@ -313,7 +326,7 @@ def generate_pointer_conversion_pdf(request):
 
     cpi_text = request.data.get('cpi_text')
     if not cpi_text:
-        cpi_text = context['cpi_display'] or '……………'
+        cpi_text = context['cpi_display'] or '\u2026\u2026\u2026\u2026\u2026'
     cpi_text = str(cpi_text).strip()
 
     min_cpi = request.data.get('min_cpi')
@@ -322,9 +335,7 @@ def generate_pointer_conversion_pdf(request):
     min_cpi = str(min_cpi).strip()
 
     issued_on = timezone.now().date()
-    prefix = settings.BONAFIDE_REFERENCE_PREFIX.rstrip('/')
     roll_number = student.id.user.username
-    reference_number = f'{prefix}/{issued_on.year}/{issued_on.month:02d}/{roll_number}'
 
     with transaction.atomic():
         certificate = BonafideCertificate.objects.create(
@@ -332,10 +343,13 @@ def generate_pointer_conversion_pdf(request):
             purpose='Pointer Conversion',
             custom_purpose='',
             certificate_type=CERTIFICATE_TYPE,
-            reference_number=reference_number,
             issued_by=request.user,
             fee_rows={'cpi': cpi_text, 'min_cpi': min_cpi},
         )
+        reference_number = _reference_number(
+            roll_number, issued_on, certificate.pk)
+        certificate.reference_number = reference_number
+        certificate.save(update_fields=['reference_number'])
         pdf_bytes = render_pointer_conversion_pdf(
             context, cpi_text, min_cpi, reference_number, issued_on
         ).getvalue()
