@@ -1,4 +1,4 @@
-import os
+import re
 from io import BytesIO
 from xml.sax.saxutils import escape
 
@@ -20,6 +20,7 @@ from rest_framework.decorators import api_view, authentication_classes, permissi
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from applications.academic_information.models import Student
 from applications.academic_procedures.models import BonafideCertificate
 from applications.globals.decorators import role_required
 from applications.globals.programme_scope import (
@@ -41,35 +42,32 @@ CERTIFICATE_TYPE = 'pointer_conv'
 
 
 def resolve_student_cpi(student):
-    """
-    Dynamically calculate student's CPI using the canonical calculate_cpi_for_student()
-    function (from examination) that calculates live weighted CPI across all completed
-    course grades. If current semester grades are not submitted yet, checks prior semesters.
-    Falls back to student.cpi if positive.
-    """
-    curr_sem = student.curr_semester_no or 1
-    # 1. Try calculate_cpi_for_student for current semester
-    try:
-        cpi_val, _, _ = calculate_cpi_for_student(student, curr_sem, None)
-        if cpi_val and float(cpi_val) > 0:
-            return float(cpi_val), curr_sem
-    except Exception:
-        pass
+    """The student's CPI as of their last term whose result is declared, a
+    summer term included, as Grade Validation and the grade card count it.
+    Returns (cpi, semester), or (0.0, None) when no result is out yet."""
+    from applications.examination.api.views import result_declared_for
+    from applications.online_cms.models import Student_grades
 
-    # 2. Check previous semesters descending
-    for sem in range(curr_sem - 1, 0, -1):
-        try:
-            cpi_val, _, _ = calculate_cpi_for_student(student, sem, None)
-            if cpi_val and float(cpi_val) > 0:
-                return float(cpi_val), sem
-        except Exception:
-            pass
-
-    # 3. Fallback to student.cpi if positive
-    if student.cpi and float(student.cpi) > 0:
-        return float(student.cpi), None
-
+    term_order = {'Odd Semester': 0, 'Even Semester': 1, 'Summer Semester': 2}
+    terms = sorted(
+        set(Student_grades.objects.filter(roll_no=student.id_id)
+            .values_list('semester', 'semester_type')),
+        key=lambda t: (t[0] or 0, term_order.get(t[1], 3)),
+        reverse=True,
+    )
+    for semester, semester_type in terms:
+        if semester and result_declared_for(student, semester, semester_type):
+            cpi, _, _ = calculate_cpi_for_student(student, semester, semester_type)
+            return float(cpi or 0), semester
     return 0.0, None
+
+
+CPI_PATTERN = re.compile(r'^(10(\.0{1,2})?|\d(\.\d{1,2})?)$')
+
+
+def _valid_cpi(value):
+    """A CPI as printed on the certificate: 0 to 10, at most two decimals."""
+    return bool(CPI_PATTERN.match(value or ''))
 
 
 def build_pointer_conversion_context(student):
@@ -279,8 +277,10 @@ def pointer_conversion_student(request):
         )
 
     try:
-        student = _student_queryset().get(id__user__username=roll_number)
-    except Exception:
+        student = _student_queryset().get(
+            id__user__username=roll_number,
+            id__user__is_active=True, id__user_status='PRESENT')
+    except Student.DoesNotExist:
         return Response(
             {'error': f"No student found with roll number '{roll_number}'."},
             status=status.HTTP_404_NOT_FOUND,
@@ -315,7 +315,9 @@ def generate_pointer_conversion_pdf(request):
     if not student_id:
         return Response({'error': 'student_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    student = get_object_or_404(_student_queryset(), pk=student_id)
+    student = get_object_or_404(
+        _student_queryset(), pk=student_id,
+        id__user__is_active=True, id__user_status='PRESENT')
     context = build_pointer_conversion_context(student)
     if not context['is_ready']:
         return Response({
@@ -323,15 +325,15 @@ def generate_pointer_conversion_pdf(request):
             'details': context['validation_errors'],
         }, status=status.HTTP_400_BAD_REQUEST)
 
-    cpi_text = request.data.get('cpi_text')
-    if not cpi_text:
-        cpi_text = context['cpi_display'] or '\u2026\u2026\u2026\u2026\u2026'
-    cpi_text = str(cpi_text).strip()
-
-    min_cpi = request.data.get('min_cpi')
-    if not min_cpi:
-        min_cpi = context['min_cpi']
-    min_cpi = str(min_cpi).strip()
+    cpi_text = str(request.data.get('cpi_text') or context['cpi_display']).strip()
+    min_cpi = str(request.data.get('min_cpi') or context['min_cpi']).strip()
+    errors = []
+    if not _valid_cpi(cpi_text):
+        errors.append('CPI must be a number from 0 to 10 with at most two decimals.')
+    if not _valid_cpi(min_cpi):
+        errors.append('Minimum CPI must be a number from 0 to 10 with at most two decimals.')
+    if errors:
+        return Response({'error': ' '.join(errors)}, status=status.HTTP_400_BAD_REQUEST)
 
     issued_on = timezone.now().date()
     roll_number = student.id.user.username
@@ -368,8 +370,11 @@ def generate_pointer_conversion_pdf(request):
 @role_required(['acadadmin'])
 def pointer_conversion_certificates(request):
     """List previously issued pointer conversion certificates."""
-    page_number = int(request.query_params.get('page', 1))
-    page_size = min(int(request.query_params.get('page_size', 20)), 100)
+    page_number = request.query_params.get('page', 1)
+    try:
+        page_size = min(max(int(request.query_params.get('page_size', 20)), 1), 100)
+    except (TypeError, ValueError):
+        page_size = 20
     search = (request.query_params.get('search') or '').strip()
 
     queryset = BonafideCertificate.objects.filter(
